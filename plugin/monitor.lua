@@ -17,6 +17,19 @@ local HINT_KEY = "Ctrl+M"
 -- the person reading it acts on it.
 local TICK_MS = 250
 
+-- A wake draws its notice as one line of transcript before the run it
+-- starts, while a reported line can be a whole log line, so the note
+-- keeps the head and drops the rest.
+local NOTE_WIDTH = 160
+
+-- maki answers on_exit only after the last process holding the job's
+-- pipes lets go, and a command that leaves a server, a watcher, or a
+-- follow-mode stage behind holds them for hours or for good. The command
+-- therefore prints a marker line for itself, which is what reports its
+-- own finish; on_exit stays as the fallback, and as the point where the
+-- pipes really closed.
+local MARKER = "__maki_monitor_exit__"
+
 local SCHEMA = {
   type = "object",
   properties = {
@@ -46,15 +59,59 @@ local SCHEMA = {
   additionalProperties = false,
 }
 
-local function report(entry, line, prefix)
+-- Labels, commands, and reported lines are whatever the model or the
+-- process sent, newlines and all, and each gets rendered as one line: a
+-- picker row, a listing entry, or the note a wake draws in the
+-- transcript. Left as they came, one of them could draw rows of its own
+-- and invent or hide a monitor in a listing someone is reading to decide
+-- what to stop.
+local function one_line(s)
+  return (tostring(s):gsub("%s+", " "))
+end
+
+local function note_text(text)
+  local split = maki.ui.truncate_text(one_line(text), NOTE_WIDTH)
+  if split.tail == "" then
+    return split.head
+  end
+  return split.head .. "…"
+end
+
+-- One shape for every report, so the wake flag and the note that
+-- explains a wake cannot drift apart between the line path and the exit
+-- path. The note is what tells the person why a run started without them
+-- typing; a notice maki refuses costs the report and the run it would
+-- have started, so that failure is logged instead of vanishing.
+local function notify(entry, text, wake)
+  if wake == nil then
+    wake = entry.wake
+  end
+  local ok, err = maki.session.notify(text, {
+    session = entry.session,
+    wake = wake,
+    display = note_text(text),
+  })
+  if not ok then
+    maki.log.warn(string.format("[%s] could not report: %s", entry.label, tostring(err)))
+  end
+end
+
+local function wrapped(command)
+  return command .. "\nprintf '" .. MARKER .. " %s\\n' \"$?\""
+end
+
+-- One line from a monitored stream: dropped unless it matches, dropped
+-- once the budget is spent, reported otherwise.
+local function report_line(entry, line, prefix)
   if entry.match then
     local ok, matched = pcall(string.match, line, entry.match)
     if not ok then
       if not entry.match_error then
         entry.match_error = true
-        maki.session.notify(
+        notify(
+          entry,
           string.format("[%s] invalid match pattern: %s", entry.label, tostring(matched)),
-          { session = entry.session }
+          false
         )
       end
       return
@@ -67,25 +124,30 @@ local function report(entry, line, prefix)
   if entry.seen > MAX_LINES then
     if not entry.capped then
       entry.capped = true
-      maki.session.notify(
+      notify(
+        entry,
         string.format("[%s] stopped reporting after %d lines", entry.label, MAX_LINES),
-        { session = entry.session }
+        false
       )
     end
     return
   end
-  maki.session.notify(
-    string.format("[%s] %s%s", entry.label, prefix or "", line),
-    { session = entry.session, wake = entry.wake }
-  )
+  notify(entry, string.format("[%s] %s%s", entry.label, prefix or "", line))
 end
 
--- Labels and commands are whatever the model sent, newlines and all,
--- and both get rendered a line per monitor. Left as they came, one entry
--- could draw rows of its own and invent or hide a monitor in a listing
--- someone is reading to decide what to stop.
-local function one_line(s)
-  return (tostring(s):gsub("%s+", " "))
+local function report(entry, line, prefix)
+  local text, code = line:match("^(.-)" .. MARKER .. " (%-?%d+)$")
+  if code then
+    if text ~= "" then
+      report_line(entry, text, prefix)
+    end
+    if not entry.exited then
+      entry.exited = true
+      notify(entry, string.format("[%s] exited with %d", entry.label, tonumber(code)))
+    end
+    return
+  end
+  report_line(entry, line, prefix)
 end
 
 -- Lua patterns have no `|` alternation. A caller used to regex writes
@@ -208,7 +270,9 @@ maki.api.register_tool({
     .. "resumes with nobody typing. Pair wake with match, or every reported "
     .. "line costs a run. Use this instead of `sleep` and repeated checks, for "
     .. "a build, a test run, a deploy, or a dev server. Without wake, lines "
-    .. "wait for the next turn. Stop it with monitor_stop.",
+    .. "wait for the next turn. The command must return for its exit to be "
+    .. "reported: a follow-mode command like `tail -F` never does, so only its "
+    .. "matching lines can report. Stop it with monitor_stop.",
   schema = SCHEMA,
   -- Starting a job needs the `run` permission, which a bundled plugin
   -- already has. That covers the plugin, not the command: without a scope
@@ -262,7 +326,7 @@ maki.api.register_tool({
       seen = 0,
     }
 
-    local id, start_err = maki.fn.jobstart(command, {
+    local id, start_err = maki.fn.jobstart(wrapped(command), {
       scope = "plugin",
       on_stdout = function(job_id, line)
         local e = monitors[job_id]
@@ -280,10 +344,9 @@ maki.api.register_tool({
         local e = monitors[job_id]
         if e then
           monitors[job_id] = nil
-          maki.session.notify(
-            string.format("[%s] exited with %d", e.label, code),
-            { session = e.session, wake = e.wake }
-          )
+          if not e.exited then
+            notify(e, string.format("[%s] exited with %d", e.label, code))
+          end
           refresh_hint()
         end
       end,
