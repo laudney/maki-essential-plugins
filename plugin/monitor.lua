@@ -464,10 +464,6 @@ maki.api.register_tool({
 -- another session's rows on screen.
 local picker = nil
 
-local function dispw(s)
-  return utf8.len(s) or #s
-end
-
 local function picker_index(id)
   for i, row in ipairs(picker.rows) do
     if row.id == id then
@@ -500,7 +496,7 @@ local function picker_render()
     -- full width, the way the task rows do.
     local used = 0
     for _, span in ipairs(spans) do
-      used = used + dispw(span[1])
+      used = used + maki.ui.display_width(span[1])
     end
     local trail = picker.width - used
     if trail > 0 then
@@ -570,15 +566,18 @@ end
 
 local function picker_key(key)
   local page = math.max(picker.height - 2, 1)
-  if key == "esc" or key == "ctrl+c" or key == "ctrl+m" then
+  if key == "<Esc>" or key == "<C-m>" then
     picker_finish()
-  elseif key == "up" then
+  elseif key == "d" then
+    stop(picker.sel_id, picker.session)
+    picker_refresh()
+  elseif key == "<Up>" then
     picker_move(-1, true)
-  elseif key == "down" then
+  elseif key == "<Down>" then
     picker_move(1, true)
-  elseif key == "pageup" then
+  elseif key == "<PageUp>" then
     picker_move(-page, false)
-  elseif key == "pagedown" then
+  elseif key == "<PageDown>" then
     picker_move(page, false)
   end
 end
@@ -600,7 +599,7 @@ local function open_picker()
     height = "70%",
     border = "rounded",
     focus = true,
-    footer = { { "Esc", "close" } },
+    footer = { { "↑/↓", "select" }, { "d", "stop" }, { "Esc", "close" } },
   })
   picker = {
     session = session,
@@ -615,15 +614,13 @@ local function open_picker()
 
   while picker do
     local ev = picker.win:recv(TICK_MS)
-    if not ev or ev.type == "close" then
+    if picker.expired then
+      picker_finish()
+    elseif not ev or ev.type == "close" then
       -- The window is already gone, so there is nothing left to close.
       picker = nil
     elseif ev.type == "timeout" then
-      if picker.expired then
-        picker_finish()
-      else
-        picker_refresh()
-      end
+      picker_refresh()
     elseif ev.type == "key" then
       picker_key(ev.key)
     elseif ev.type == "resize" then
