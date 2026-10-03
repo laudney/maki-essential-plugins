@@ -1,0 +1,60 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: stylua@2.5.2,ruff@0.16.9
+      - run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - run: LUA_PATH='./lua/?.lua;;' lua5.4 tests/spec.lua
+      - run: stylua --check lua plugin tests
+      - run: ruff check tests/runtime.py
+      - run: ruff format --check tests/runtime.py
+
+  runtime:
+    name: Upstream Maki (${{ matrix.maki_ref }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        maki_ref: [v0.6.0, main]
+    env:
+      OPENSSL_NO_VENDOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: tontinton/maki
+          ref: ${{ matrix.maki_ref }}
+          path: .cache/maki
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+          components: clippy,rustfmt
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .cache/maki -> ../runtime
+      - run: rustfmt --edition 2024 --check tests/runtime.rs
+      - run: python3 tests/runtime.py .cache/maki --lint
