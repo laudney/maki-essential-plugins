@@ -5,6 +5,7 @@
 -- as its own prompt, so a chatty watcher costs nothing until the agent
 -- runs again.
 
+local status_hint = require("status_hint")
 local monitors = {}
 
 -- A watcher that floods would quietly undo the point of the mailbox, so
@@ -181,10 +182,10 @@ local function refresh_hint()
     end
   end
   if count == 0 then
-    maki.ui.set_status_hint(nil)
+    status_hint.set("monitor", session, nil)
     return
   end
-  maki.ui.set_status_hint({
+  status_hint.set("monitor", session, {
     { string.format(" %d %s ", count, count == 1 and "monitor" or "monitors"), "foreground" },
     { HINT_KEY, "keybind_key" },
     { " ", "" },

@@ -1,4 +1,5 @@
 local helpers = require("goal_helpers")
+local status_hint = require("status_hint")
 local ToolView = require("maki.tool_view")
 
 local PHASE_DELIVERY = "delivery"
@@ -131,9 +132,9 @@ local function read_goal(session_id)
   end)
 end
 
-local function set_hint(record, was_interrupted)
+local function set_hint(session_id, record, was_interrupted)
   local text = helpers.hint(record, os.time(), was_interrupted)
-  maki.ui.set_status_hint(text and { { text, "foreground" } } or nil)
+  status_hint.set("goal", session_id, text and { { text, "foreground" } } or nil)
 end
 
 local function refresh_hint(session_id, generation)
@@ -144,13 +145,13 @@ local function refresh_hint(session_id, generation)
   local record, err, was_interrupted = read_goal(session_id)
   if err then
     if maki.session.current() == session_id and generation == focus_generation then
-      maki.ui.set_status_hint(nil)
+      status_hint.clear("goal", session_id)
     end
     maki.log.warn("goal [session " .. session_id .. "]: cannot refresh hint: " .. tostring(err))
     return
   end
   if maki.session.current() == session_id and generation == focus_generation then
-    set_hint(record, was_interrupted)
+    set_hint(session_id, record, was_interrupted)
   end
 end
 
@@ -489,6 +490,11 @@ maki.api.create_autocmd({ "ToolStart", "ToolDone" }, {
 maki.api.create_autocmd("TurnEnd", {
   callback = function(event)
     local session_id = event.data.session_id
+    if event.data.reason == "cancelled" or event.data.reason == "dropped" then
+      clear_fences(session_id)
+      background_refresh(session_id)
+      return
+    end
     local fence = running_executions[session_id]
     running_executions[session_id] = nil
     if not fence then
@@ -576,12 +582,13 @@ maki.api.create_autocmd("TurnError", {
 maki.api.create_autocmd("SessionReset", {
   callback = function(event)
     clear_fences(event.data.session_id)
-    maki.ui.set_status_hint(nil)
+    status_hint.clear("goal", event.data.session_id)
   end,
 })
 
 maki.api.create_autocmd("SessionEnd", {
   callback = function(event)
     clear_fences(event.data.session_id)
+    status_hint.clear("goal", event.data.session_id)
   end,
 })

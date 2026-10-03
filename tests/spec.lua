@@ -208,10 +208,7 @@ case("format_puts_objective_first_and_identity_last", function()
   )
 
   local completed = h.format(goal({ status = "complete", summary = "Shipped" }))
-  eq(
-    completed,
-    "Objective: Ship the feature\nStatus: complete\nSummary: Shipped\nGoal goal-1\nExecution: execution-1"
-  )
+  eq(completed, "Objective: Ship the feature\nStatus: complete\nSummary: Shipped\nGoal goal-1\nExecution: execution-1")
 end)
 
 case("hint_tracks_status_and_elapsed_minutes", function()
@@ -227,12 +224,13 @@ end)
 case("completion_output_requests_a_final_summary", function()
   local completed = h.update_output(goal({ status = "complete", summary = "Shipped" }))
   assert(completed:find("Summary: Shipped", 1, true))
-  assert(completed:find("Give the user a final response now.", 1, true))
+  assert(completed:find("Give the user a final response when all outstanding work has finished.", 1, true))
+  assert(completed:find("All sibling tool calls have finished", 1, true) == nil)
   assert(completed:find("Summarize what was completed and the evidence", 1, true))
   assert(completed:find("do not call update_goal again", 1, true))
 
   local blocked = h.update_output(goal({ status = "blocked", summary = "Needs input" }))
-  assert(blocked:find("Give the user a final response now.", 1, true) == nil)
+  assert(blocked:find("Give the user a final response", 1, true) == nil)
 end)
 
 if #failures > 0 then

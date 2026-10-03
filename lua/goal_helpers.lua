@@ -1,7 +1,7 @@
 local M = {}
 
 local FINAL_RESPONSE_INSTRUCTION =
-  "All sibling tool calls have finished before this result was returned. Give the user a final response now. Summarize what was completed and the evidence, include any important limitations, and do not call update_goal again."
+  "Give the user a final response when all outstanding work has finished. Summarize what was completed and the evidence, include any important limitations, and do not call update_goal again."
 local STATUSES = {
   active = true,
   blocked = true,
