@@ -7,6 +7,7 @@
 
 local status_hint = require("status_hint")
 local monitors = {}
+local marker_counter = 0
 
 -- A watcher that floods would quietly undo the point of the mailbox, so
 -- each one gets a budget and then goes quiet with one line saying so.
@@ -97,8 +98,12 @@ local function notify(entry, text, wake)
   end
 end
 
-local function wrapped(command)
-  return command .. "\nprintf '" .. MARKER .. " %s\\n' \"$?\""
+local function wrapped(command, marker)
+  return "(\n"
+    .. command
+    .. "\n)\n_maki_monitor_status=$?\nprintf '"
+    .. marker
+    .. ' %s\\n\' "$_maki_monitor_status"\nexit "$_maki_monitor_status"'
 end
 
 -- One line from a monitored stream: dropped unless it matches, dropped
@@ -109,11 +114,7 @@ local function report_line(entry, line, prefix)
     if not ok then
       if not entry.match_error then
         entry.match_error = true
-        notify(
-          entry,
-          string.format("[%s] invalid match pattern: %s", entry.label, tostring(matched)),
-          false
-        )
+        notify(entry, string.format("[%s] invalid match pattern: %s", entry.label, tostring(matched)), false)
       end
       return
     end
@@ -125,11 +126,7 @@ local function report_line(entry, line, prefix)
   if entry.seen > MAX_LINES then
     if not entry.capped then
       entry.capped = true
-      notify(
-        entry,
-        string.format("[%s] stopped reporting after %d lines", entry.label, MAX_LINES),
-        false
-      )
+      notify(entry, string.format("[%s] stopped reporting after %d lines", entry.label, MAX_LINES), false)
     end
     return
   end
@@ -137,7 +134,10 @@ local function report_line(entry, line, prefix)
 end
 
 local function report(entry, line, prefix)
-  local text, code = line:match("^(.-)" .. MARKER .. " (%-?%d+)$")
+  local text, code
+  if not prefix then
+    text, code = line:match("^(.-)" .. entry.marker .. " (%-?%d+)$")
+  end
   if code then
     if text ~= "" then
       report_line(entry, text, prefix)
@@ -157,14 +157,25 @@ end
 -- `%|` still matches a literal pipe, so only a pipe that nothing escapes
 -- is the mistake.
 local function unescaped_pipe(pattern)
-  local from = 1
-  local pos = pattern:find("|", from, true)
-  while pos do
-    if pos == 1 or pattern:sub(pos - 1, pos - 1) ~= "%" then
+  local pos, in_class = 1, false
+  while pos <= #pattern do
+    local char = pattern:sub(pos, pos)
+    if char == "%" then
+      pos = pos + (not in_class and pattern:sub(pos + 1, pos + 1) == "b" and 3 or 1)
+    elseif char == "[" and not in_class then
+      in_class = true
+      if pattern:sub(pos + 1, pos + 1) == "^" then
+        pos = pos + 1
+      end
+      if pattern:sub(pos + 1, pos + 1) == "]" then
+        pos = pos + 1
+      end
+    elseif char == "]" then
+      in_class = false
+    elseif char == "|" and not in_class then
       return true
     end
-    from = pos + 1
-    pos = pattern:find("|", from, true)
+    pos = pos + 1
   end
   return false
 end
@@ -318,6 +329,7 @@ maki.api.register_tool({
       end
     end
 
+    marker_counter = marker_counter + 1
     local entry = {
       command = command,
       label = input.label,
@@ -325,9 +337,10 @@ maki.api.register_tool({
       wake = input.wake or false,
       session = session,
       seen = 0,
+      marker = string.format("%s%d_%d__", MARKER, os.time(), marker_counter),
     }
 
-    local id, start_err = maki.fn.jobstart(wrapped(command), {
+    local id, start_err = maki.fn.jobstart(wrapped(command, entry.marker), {
       scope = "plugin",
       on_stdout = function(job_id, line)
         local e = monitors[job_id]
