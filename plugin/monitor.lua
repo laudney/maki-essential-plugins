@@ -114,7 +114,7 @@ local function report_line(entry, line, prefix)
     if not ok then
       if not entry.match_error then
         entry.match_error = true
-        notify(entry, string.format("[%s] invalid match pattern: %s", entry.label, tostring(matched)), false)
+        notify(entry, string.format("[%s] invalid match pattern: %s", entry.label, tostring(matched)))
       end
       return
     end
