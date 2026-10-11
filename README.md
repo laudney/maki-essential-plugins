@@ -1,12 +1,14 @@
 # Maki essential plugins
 
-Two Lua plugins for [Maki](https://github.com/tontinton/maki): keep an agent
-working toward a goal, and get notified when a background command makes progress
-or finishes.
+Lua plugins for [Maki](https://github.com/tontinton/maki): keep an agent
+working toward a goal, get notified when a background command makes progress
+or finishes, and optionally use RunInfra's own model discovery.
 
-**Requires upstream Maki 0.6.0 or later. No fork is required.** Use Maki's
-interactive terminal UI for the examples below. If you have not installed Maki,
-start with its [installation guide](https://github.com/tontinton/maki#installation).
+**Goals and monitors require upstream Maki 0.6.0 or later.** The optional
+RunInfra provider requires the explicit provider selection API described
+below. Use Maki's interactive terminal UI for the examples. If you have not
+installed Maki, start with its
+[installation guide](https://github.com/tontinton/maki#installation).
 
 ## Install
 
@@ -20,6 +22,8 @@ start with its [installation guide](https://github.com/tontinton/maki#installati
 2. Start Maki, or restart it if it is already open.
 3. Review and approve the package permissions when Maki asks. The goal plugin
    reads and writes saved goal state; the monitor plugin runs shell commands.
+   RunInfra needs environment access for its key and network access to
+   `api.runinfra.ai`.
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`
 
@@ -89,6 +93,46 @@ require the interactive UI; a headless run does not keep a watcher alive after
 Maki exits. Some forks also show a compact report in the transcript. Upstream
 Maki receives the same report through its session mailbox.
 
+## Optional RunInfra provider
+
+RunInfra stays disabled until you select this package to implement it. Goals
+and monitors still load on Maki releases that lack provider selection.
+
+The provider requires `maki.provider.is_selected` and the `providers.toml`
+`plugin` field proposed in [Maki PR #1216](https://github.com/tontinton/maki/pull/1216).
+Until that change is merged and released, use a Maki build containing it.
+
+Add the selection to `~/.config/maki/providers.toml`, keeping any existing
+RunInfra settings in the same entry:
+
+```toml
+[runinfra]
+plugin = "maki-essential-plugins"
+```
+
+Restart Maki after changing the selection. Existing `runinfra/<model>` settings
+and keys saved under `runinfra` still work. To use an environment key, set
+`RUNINFRA_GATEWAY_KEY` before starting Maki. The older `RUNINFRA_API_KEY` alias
+is also supported; a non-empty gateway key takes priority when both are set.
+With neither variable set, Maki uses the saved RunInfra key. You can set
+`RUNINFRA_BASE_URL` to send requests through your own gateway, including its
+`/v1` path.
+
+[Models.dev](https://github.com/anomalyco/models.dev) is a public database of
+model metadata, prices, and capabilities. It does not hold your RunInfra key
+or serve inference requests. Its listing can differ from the models available
+to your account. This plugin instead calls RunInfra's authenticated
+[`/v1/models` endpoint](https://runinfra.ai/docs/api-reference/models).
+It uses the returned inference IDs, positive token limits, published input
+modalities, and reasoning effort levels. Prices stay in USD per million
+tokens. Absent or invalid token limits and incomplete input/output prices
+stay unspecified.
+
+The explicit selection identifies which installed package may receive the
+saved key for `runinfra`. Installing this package alone does not replace the
+catalog-backed implementation. The network host permission and Maki's existing
+provider checks still apply.
+
 ## Update
 
 Use `/packupdate maki-essential-plugins` to review updates.
@@ -109,12 +153,16 @@ Run the Lua state tests and formatting check from the repository root:
 
 ```sh
 LUA_PATH='./lua/?.lua;;' lua tests/spec.lua
+lua tests/runinfra.lua
 stylua --check lua plugin tests
 ```
 
 The integration tests load this package in Maki's real Lua runtime, run shell
-jobs, and exercise goal events and picker keys. They use temporary XDG
-directories and do not call a model or use your saved Maki configuration.
+jobs, and exercise goal events and picker keys. With the provider selection
+API present, they also replay fixed RunInfra responses and check saved keys,
+stale catalog metadata, and request effort settings. They use temporary XDG
+directories and recorded local HTTP responses; they do not call a remote model
+or use your saved Maki configuration.
 Install Python 3.11+, Rust 1.99.0, and `cargo-nextest`, then point the runner at
 an upstream Maki source checkout:
 
@@ -129,7 +177,9 @@ instructions. Build files are cached in `.cache/runtime/`, or in
 
 CI tests upstream `v0.6.0` and `main` on each push and pull request, and weekly
 to detect upstream API changes. It also checks Lua state tests, Python lint,
-and formatting.
+and formatting. The runner enables provider tests only when the source checkout
+contains the selection API. Reused Maki code and fixed fixtures are documented
+in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## License
 
