@@ -99,8 +99,9 @@ RunInfra stays disabled until you select this package to implement it. Goals
 and monitors still load on Maki releases that lack provider selection.
 
 The provider requires `maki.provider.is_selected` and the `providers.toml`
-`plugin` field proposed in [Maki PR #1216](https://github.com/tontinton/maki/pull/1216).
-Until that change is merged and released, use a Maki build containing it.
+`plugin` field merged in [Maki PR #1216](https://github.com/tontinton/maki/pull/1216).
+These APIs are available on upstream `main`. Use a build containing that change
+until it is included in a release.
 
 Add the selection to `~/.config/maki/providers.toml`, keeping any existing
 RunInfra settings in the same entry:
