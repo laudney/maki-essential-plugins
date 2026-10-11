@@ -4,3 +4,6 @@ min_maki_version = "0.6.0"
 fs_read = true
 fs_write = true
 run = true
+net = true
+env = true
+net_hosts = ["api.runinfra.ai"]
