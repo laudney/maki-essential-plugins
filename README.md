@@ -5,9 +5,9 @@ working toward a goal, get notified when a background command makes progress
 or finishes, and optionally use RunInfra's own model discovery.
 
 **Goals and monitors require upstream Maki 0.6.0 or later.** The optional
-RunInfra provider requires the explicit provider selection API described
-below. Use Maki's interactive terminal UI for the examples. If you have not
-installed Maki, start with its
+RunInfra provider requires Maki 0.6.3 or later, which includes the explicit
+provider selection API described below. Use Maki's interactive terminal UI for
+the examples. If you have not installed Maki, start with its
 [installation guide](https://github.com/tontinton/maki#installation).
 
 ## Install
@@ -23,7 +23,9 @@ installed Maki, start with its
 3. Review and approve the package permissions when Maki asks. The goal plugin
    reads and writes saved goal state; the monitor plugin runs shell commands.
    RunInfra needs environment access for its key and network access to
-   `api.runinfra.ai`.
+   `api.runinfra.ai`. To have this package implement RunInfra, select it in
+   `providers.toml` as shown in
+   [Optional RunInfra provider](#optional-runinfra-provider).
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`
 
@@ -95,29 +97,37 @@ Maki receives the same report through its session mailbox.
 
 ## Optional RunInfra provider
 
-RunInfra stays disabled until you select this package to implement it. Goals
-and monitors still load on Maki releases that lack provider selection.
+RunInfra works without this package. Maki reaches it through its
+[Models.dev](https://models.dev/) entry with the generic OpenAI-compatible
+client, so a key saved under `runinfra` keeps working. This package implements
+RunInfra, including its authenticated model discovery, only when you select it
+in `providers.toml`.
 
-The provider requires `maki.provider.is_selected` and the `providers.toml`
-`plugin` field merged in [Maki PR #1216](https://github.com/tontinton/maki/pull/1216).
-These APIs are available on upstream `main`. Use a build containing that change
-until it is included in a release.
+The selection API is `maki.provider.is_selected` and the `providers.toml`
+`plugin` field, merged in
+[Maki PR #1216](https://github.com/tontinton/maki/pull/1216) and released in
+Maki 0.6.3. Goals and monitors still load on Maki releases that lack provider
+selection.
 
-Add the selection to `~/.config/maki/providers.toml`, keeping any existing
-RunInfra settings in the same entry:
+To enable it:
 
-```toml
-[runinfra]
-plugin = "maki-essential-plugins"
-```
+1. Add the selection to `~/.config/maki/providers.toml`, keeping any existing
+   RunInfra settings in the same entry:
 
-Restart Maki after changing the selection. Existing `runinfra/<model>` settings
-and keys saved under `runinfra` still work. To use an environment key, set
-`RUNINFRA_GATEWAY_KEY` before starting Maki. The older `RUNINFRA_API_KEY` alias
-is also supported; a non-empty gateway key takes priority when both are set.
-With neither variable set, Maki uses the saved RunInfra key. You can set
-`RUNINFRA_BASE_URL` to send requests through your own gateway, including its
-`/v1` path.
+   ```toml
+   [runinfra]
+   plugin = "maki-essential-plugins"
+   ```
+
+2. Reload plugins with `/reload`, or restart Maki. Maki reads the selection
+   when plugins load.
+
+Existing `runinfra/<model>` settings and keys saved under `runinfra` still
+work. To use an environment key, set `RUNINFRA_GATEWAY_KEY` before starting
+Maki. The older `RUNINFRA_API_KEY` alias is also supported; a non-empty gateway
+key takes priority when both are set. With neither variable set, Maki uses the
+saved RunInfra key. You can set `RUNINFRA_BASE_URL` to send requests through
+your own gateway, including its `/v1` path.
 
 [Models.dev](https://github.com/anomalyco/models.dev) is a public database of
 model metadata, prices, and capabilities. It does not hold your RunInfra key
@@ -131,8 +141,10 @@ stay unspecified.
 
 The explicit selection identifies which installed package may receive the
 saved key for `runinfra`. Installing this package alone does not replace the
-catalog-backed implementation. The network host permission and Maki's existing
-provider checks still apply.
+catalog-backed implementation. If the selected package is missing or fails to
+load, RunInfra stays unavailable; Maki does not fall back to the generic
+client. Removing `plugin` and reloading restores it. The network host
+permission and Maki's existing provider checks still apply.
 
 ## Update
 
