@@ -8,6 +8,8 @@ use maki_agent::tools::{ToolContext, ToolRegistry, cli_tool_ctx};
 use maki_lua::{
     Key, Permission, PluginHost, PluginPermissions, SessionRequest, UiAction, WinCommand, WinEvent,
 };
+#[cfg(feature = "provider_selection")]
+use maki_providers::plugin;
 use maki_storage::id::{MakiId, SessionRef};
 use serde_json::{Value, json};
 
@@ -120,8 +122,19 @@ impl Runtime {
                 .unwrap_or(false);
             permissions.set(*permission, requested);
         }
+        let net_hosts: Vec<String> = manifest["permissions"]["net_hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|host| host.as_str().unwrap().to_owned())
+            .collect();
+        permissions.set_net_hosts(Some(net_hosts.into()));
+        #[cfg(feature = "provider_selection")]
+        plugin::begin_load();
         host.load_package(PACKAGE, &package, permissions, Default::default())
             .unwrap();
+        #[cfg(feature = "provider_selection")]
+        plugin::commit_load();
         let mut ctx = cli_tool_ctx();
         ctx.session_id = Some(SessionRef::from_id(id));
         ctx.registry = Arc::clone(&registry);
@@ -255,3 +268,5 @@ impl Drop for Gate {
 
 mod goals;
 mod monitors;
+#[cfg(feature = "provider_selection")]
+mod runinfra;

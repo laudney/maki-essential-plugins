@@ -38,6 +38,10 @@ def main():
     package = Path(__file__).resolve().parent.parent
     workspace = tomllib.loads((source / "Cargo.toml").read_text())
     dependencies = workspace["workspace"]["dependencies"]
+    provider_api = source / "maki-lua/src/api/provider.rs"
+    provider_selection = (
+        provider_api.exists() and "fn is_selected(" in provider_api.read_text()
+    )
     manifest = [
         "[package]",
         'name = "maki-essential-runtime-tests"',
@@ -45,6 +49,7 @@ def main():
         'edition = "2024"',
         "[features]",
         "notice_envelope = []",
+        "provider_selection = []",
         "[[test]]",
         'name = "runtime"',
         f"path = {toml_value(str(package / 'tests/runtime.rs'))}",
@@ -52,7 +57,17 @@ def main():
     ]
     for name in ("maki-agent", "maki-config", "maki-lua", "maki-storage"):
         manifest.append(f"{name} = {toml_value({'path': str(source / name)})}")
-    for name in ("flume", "serde_json", "smol", "toml"):
+    if provider_selection:
+        manifest.append(
+            "maki-providers = "
+            + toml_value(
+                {"path": str(source / "maki-providers"), "features": ["test-support"]}
+            )
+        )
+    shared_dependencies = ["flume", "serde_json", "smol", "toml"]
+    if provider_selection:
+        shared_dependencies.extend(["serde", "tempfile", "test-case"])
+    for name in shared_dependencies:
         manifest.append(f"{name} = {toml_value(dependencies[name])}")
     manifest.extend(
         ["[profile.dev]", "debug = 0", '[profile.dev.package."*"]', "debug = 0"]
@@ -69,8 +84,13 @@ def main():
         env.setdefault("CARGO_TARGET_DIR", str(package / ".cache/runtime"))
         cargo = ["cargo", f"+{args.toolchain}"]
         options = ["--manifest-path", str(root / "Cargo.toml")]
+        features = []
         if "pub struct Notice" in (source / "maki-agent/src/mailbox.rs").read_text():
-            options.extend(["--features", "notice_envelope"])
+            features.append("notice_envelope")
+        if provider_selection:
+            features.append("provider_selection")
+        if features:
+            options.extend(["--features", ",".join(features)])
         if args.lint:
             subprocess.run(
                 cargo
