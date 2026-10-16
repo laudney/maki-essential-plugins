@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use maki_agent::SessionMailbox;
 use maki_agent::tools::{ToolContext, ToolRegistry, cli_tool_ctx};
 use maki_lua::{
-    Key, Permission, PluginHost, PluginPermissions, SessionRequest, UiAction, WinCommand, WinEvent,
+    Key, ModelRequest, Permission, PluginHost, PluginPermissions, SessionRequest, UiAction,
+    WinCommand, WinEvent,
 };
 #[cfg(feature = "provider_selection")]
 use maki_providers::plugin;
@@ -25,6 +26,15 @@ struct Runtime {
     focused: Arc<Mutex<MakiId>>,
     flashes: flume::Receiver<String>,
     windows: flume::Receiver<Window>,
+    models: Arc<Mutex<Models>>,
+}
+
+#[derive(Default)]
+struct Models {
+    current: String,
+    available: Vec<String>,
+    selected: Vec<String>,
+    error: Option<String>,
 }
 
 struct Window {
@@ -80,6 +90,8 @@ impl Runtime {
         let mailbox = SessionMailbox::register(id);
         let focused = Arc::new(Mutex::new(id));
         let ui_focus = Arc::clone(&focused);
+        let models = Arc::new(Mutex::new(Models::default()));
+        let ui_models = Arc::clone(&models);
         let actions = host.ui_action_rx();
         let (flash_tx, flashes) = flume::unbounded();
         let (window_tx, windows) = flume::unbounded();
@@ -96,6 +108,23 @@ impl Runtime {
                     }
                     UiAction::Flash(text) => {
                         flash_tx.send(text).ok();
+                    }
+                    UiAction::Model { req, reply_tx } => {
+                        let mut models = ui_models.lock().unwrap();
+                        let reply = match req {
+                            ModelRequest::Get => Ok(json!({ "spec": models.current })),
+                            ModelRequest::Available => Ok(json!(models.available)),
+                            ModelRequest::Set { spec, .. } => match &models.error {
+                                Some(error) => Err(error.clone()),
+                                None => {
+                                    let spec = spec.unwrap();
+                                    models.current.clone_from(&spec);
+                                    models.selected.push(spec);
+                                    Ok(json!({ "spec": models.current }))
+                                }
+                            },
+                        };
+                        reply_tx.send(reply).ok();
                     }
                     UiAction::OpenWin {
                         event_tx, cmd_rx, ..
@@ -146,6 +175,7 @@ impl Runtime {
             focused,
             flashes,
             windows,
+            models,
         }
     }
 
@@ -268,5 +298,6 @@ impl Drop for Gate {
 
 mod goals;
 mod monitors;
+mod providers;
 #[cfg(feature = "provider_selection")]
 mod runinfra;

@@ -85,7 +85,14 @@ def main():
         cargo = ["cargo", f"+{args.toolchain}"]
         options = ["--manifest-path", str(root / "Cargo.toml")]
         features = []
-        if "pub struct Notice" in (source / "maki-agent/src/mailbox.rs").read_text():
+        mailbox_sources = [
+            source / "maki-agent/src/mailbox.rs",
+            source / "maki-agent/src/live_session.rs",
+        ]
+        if any(
+            path.exists() and "pub struct Notice" in path.read_text()
+            for path in mailbox_sources
+        ):
             features.append("notice_envelope")
         if provider_selection:
             features.append("provider_selection")

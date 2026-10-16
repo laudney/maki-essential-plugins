@@ -2,12 +2,13 @@
 
 Lua plugins for [Maki](https://github.com/tontinton/maki): keep an agent
 working toward a goal, get notified when a background command makes progress
-or finishes, and optionally use RunInfra's own model discovery.
+or finishes, switch between providers, and optionally use RunInfra's own model
+discovery.
 
-**Goals and monitors require upstream Maki 0.6.0 or later.** The optional
-RunInfra provider requires Maki 0.6.3 or later, which includes the explicit
-provider selection API described below. Use Maki's interactive terminal UI for
-the examples. If you have not installed Maki, start with its
+**Goals, monitors, and provider switching require Maki 0.6.0 or later.**
+The optional RunInfra provider requires Maki 0.6.3 or later, which includes the
+explicit provider selection API described below. Use Maki's interactive terminal
+UI for the examples. If you have not installed Maki, start with its
 [installation guide](https://github.com/tontinton/maki#installation).
 
 ## Install
@@ -31,6 +32,38 @@ the examples. If you have not installed Maki, start with its
 
 The package is installed in Maki's XDG data directory, normally
 `~/.local/share/maki/site/pack/core/`. These plugins are loaded at startup.
+
+## Switch providers
+
+Maki saves credentials separately for each provider. Log in to each provider
+once, keeping your existing logins:
+
+```sh
+maki auth login anthropic
+maki auth login zai
+```
+
+In the interactive UI, type `/provider` to choose a provider, then one of its
+models. Type to filter either list, use **Up/Down** to select, and press
+**Enter** to confirm or **Esc** to cancel. The current provider and model are
+marked in their lists.
+
+| Command | Action |
+| --- | --- |
+| `/provider` | Choose a provider, then a model |
+| `/provider zai` | Choose a model from Z.AI |
+| `/provider anthropic/claude-sonnet-4-6` | Select a model directly |
+
+The plugin uses Maki's current model list and model policy. If a new login is
+missing from the list, open `/model` to refresh discovery, then reopen
+`/provider`. Discovery can take a moment after startup. An explicit
+`provider/model` also works for models absent from the list, subject to Maki's
+normal validation.
+
+Switching selects the model for the focused session and lets Maki save the
+last selection. Credentials stay in Maki's own store. A provider change during
+an active run takes effect on the next run. Changing sessions closes the
+picker.
 
 ## Try a goal
 
@@ -171,9 +204,9 @@ stylua --check lua plugin tests
 ```
 
 The integration tests load this package in Maki's real Lua runtime, run shell
-jobs, and exercise goal events and picker keys. With the provider selection
-API present, they also replay fixed RunInfra responses and check saved keys,
-stale catalog metadata, and request effort settings. They use temporary XDG
+jobs, and exercise goal events, provider switching, and picker keys. With the
+provider selection API present, they also replay fixed RunInfra responses and
+check saved keys, stale catalog metadata, and request effort settings. They use temporary XDG
 directories and recorded local HTTP responses; they do not call a remote model
 or use your saved Maki configuration.
 Install Python 3.11+, Rust 1.99.0, and `cargo-nextest`, then point the runner at
