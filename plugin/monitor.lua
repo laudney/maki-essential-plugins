@@ -88,12 +88,15 @@ local function notify(entry, text, wake)
   if wake == nil then
     wake = entry.wake
   end
-  local ok, err = maki.session.notify(text, {
+  local called, reported, err = pcall(maki.session.notify, text, {
     session = entry.session,
     wake = wake,
     display = note_text(text),
   })
-  if not ok then
+  if not called then
+    reported, err = nil, reported
+  end
+  if not reported then
     maki.log.warn(string.format("[%s] could not report: %s", entry.label, tostring(err)))
   end
 end

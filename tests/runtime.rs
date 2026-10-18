@@ -84,6 +84,10 @@ fn wait_until(mut ready: impl FnMut() -> bool) {
 
 impl Runtime {
     fn new() -> Self {
+        Self::new_with(|_| {})
+    }
+
+    fn new_with(adjust: impl FnOnce(&mut PluginPermissions)) -> Self {
         let registry = Arc::new(ToolRegistry::new());
         let host = PluginHost::new(Arc::clone(&registry)).unwrap();
         let id = MakiId::generate();
@@ -158,6 +162,7 @@ impl Runtime {
             .map(|host| host.as_str().unwrap().to_owned())
             .collect();
         permissions.set_net_hosts(Some(net_hosts.into()));
+        adjust(&mut permissions);
         #[cfg(feature = "provider_selection")]
         plugin::begin_load();
         host.load_package(PACKAGE, &package, permissions, Default::default())

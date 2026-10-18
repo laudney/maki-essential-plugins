@@ -193,10 +193,13 @@ local function deliver(session_id, record, message)
     execution_id = record.execution_id,
     phase = PHASE_DELIVERY,
   }
-  local delivered, delivery_err = maki.session.notify(message, {
+  local ok, delivered, delivery_err = pcall(maki.session.notify, message, {
     session = session_id,
     wake = true,
   })
+  if not ok then
+    delivered, delivery_err = nil, delivered
+  end
   if delivered then
     return true
   end

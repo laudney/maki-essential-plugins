@@ -22,10 +22,11 @@ UI for the examples. If you have not installed Maki, start with its
 
 2. Start Maki, or restart it if it is already open.
 3. Review and approve the package permissions when Maki asks. The goal plugin
-   reads and writes saved goal state; the monitor plugin runs shell commands.
-   RunInfra needs environment access for its key and network access to
-   `api.runinfra.ai`. To have this package implement RunInfra, select it in
-   `providers.toml` as shown in
+   reads and writes saved goal state and starts the turns that continue a
+   goal. The monitor plugin runs shell commands and can start a turn when a
+   wake report arrives. RunInfra needs environment access for its key and
+   network access to `api.runinfra.ai`. To have this package implement
+   RunInfra, select it in `providers.toml` as shown in
    [Optional RunInfra provider](#optional-runinfra-provider).
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`

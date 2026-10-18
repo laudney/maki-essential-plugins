@@ -1,5 +1,6 @@
 use super::{Runtime, wait_until};
 use maki_agent::SessionMailbox;
+use maki_lua::Permission;
 use maki_storage::id::MakiId;
 use serde_json::json;
 use std::fs;
@@ -71,6 +72,15 @@ fn delivery_failure_blocks_the_saved_goal() {
             .unwrap()
             .contains("Goal delivery failed")
     );
+}
+
+#[test]
+fn missing_agent_permission_blocks_the_goal() {
+    let runtime = Runtime::new_with(|permissions| permissions.set(Permission::Agent, false));
+    let flash = runtime.command("Ship the feature");
+    assert!(flash.contains("Goal error"), "{flash}");
+    assert!(flash.contains("permission denied"), "{flash}");
+    assert_eq!(runtime.goal()["status"], "blocked");
 }
 
 #[test]
