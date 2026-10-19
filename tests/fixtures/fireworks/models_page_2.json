@@ -1,0 +1,17 @@
+{
+  "models": [
+    {
+      "name": "accounts/fireworks/models/glm-5p3-flash",
+      "supportsServerless": true,
+      "conversationConfig": {"template": "chat"},
+      "contextLength": 4096,
+      "supportsImageInput": true
+    },
+    {
+      "name": "accounts/fireworks/models/new-chat",
+      "supportsServerless": true,
+      "conversationConfig": {"template": "chat"},
+      "supportsImageInput": true
+    }
+  ]
+}

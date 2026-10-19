@@ -270,20 +270,18 @@ fn session_cleanup_and_foreign_stop_cannot_affect_another_session() {
 fn monitor_forces_command_approval_and_requires_run_permission() {
     let runtime = Runtime::new();
     let tool = runtime.registry.get("monitor").unwrap();
-    assert_eq!(tool.tool.required_permission(), Some(Permission::Run));
     let invocation = tool.tool.parse(&json!({"command": "true"})).unwrap();
     let scopes = smol::block_on(invocation.permission_scopes()).unwrap();
     assert_eq!(scopes.scopes, ["true"]);
     assert!(scopes.force_prompt);
     let host = PluginHost::new(Arc::new(ToolRegistry::new())).unwrap();
     let package = PathBuf::from(std::env::var("MAKI_ESSENTIAL_PACKAGE").unwrap());
+    let mut permissions = PluginPermissions::denied();
+    for permission in Permission::ALL {
+        permissions.set(*permission, *permission != Permission::Run);
+    }
     let error = host
-        .load_package(
-            PACKAGE,
-            &package,
-            PluginPermissions::denied(),
-            Default::default(),
-        )
+        .load_package(PACKAGE, &package, permissions, Default::default())
         .unwrap_err();
     assert!(error.to_string().contains("run"), "{error}");
 }

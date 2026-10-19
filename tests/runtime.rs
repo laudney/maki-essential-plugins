@@ -301,6 +301,8 @@ impl Drop for Gate {
     }
 }
 
+#[cfg(feature = "provider_selection")]
+mod fireworks;
 mod goals;
 mod monitors;
 mod providers;

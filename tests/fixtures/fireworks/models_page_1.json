@@ -1,0 +1,34 @@
+{
+  "models": [
+    {
+      "name": "accounts/fireworks/models/kimi-k3",
+      "supportsServerless": true,
+      "conversationConfig": {"template": "chat"},
+      "contextLength": 1048576,
+      "supportsImageInput": true
+    },
+    {
+      "name": "accounts/fireworks/models/glm-5p3-flash",
+      "supportsServerless": true,
+      "conversationConfig": {"template": "chat"},
+      "contextLength": 1048576
+    },
+    {
+      "name": "accounts/fireworks/models/embedding-only",
+      "kind": "EMBEDDING_MODEL",
+      "supportsServerless": true,
+      "contextLength": 32768
+    },
+    {
+      "name": "accounts/fireworks/models/dedicated-only",
+      "supportsServerless": false,
+      "conversationConfig": {"template": "chat"}
+    },
+    {
+      "name": "invalid-model-name",
+      "supportsServerless": true,
+      "conversationConfig": {"template": "chat"}
+    }
+  ],
+  "nextPageToken": "page+/=2&x"
+}

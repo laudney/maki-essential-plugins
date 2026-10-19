@@ -7,4 +7,4 @@ fs_write = true
 run = true
 net = true
 env = true
-net_hosts = ["api.runinfra.ai"]
+net_hosts = ["api.runinfra.ai", "api.fireworks.ai"]

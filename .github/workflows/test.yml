@@ -23,6 +23,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y lua5.4
       - run: LUA_PATH='./lua/?.lua;;' lua5.4 tests/spec.lua
       - run: lua5.4 tests/runinfra.lua
+      - run: lua5.4 tests/fireworks.lua
       - run: stylua --check lua plugin tests
       - run: ruff check tests/runtime.py
       - run: ruff format --check tests/runtime.py

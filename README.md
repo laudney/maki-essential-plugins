@@ -2,13 +2,14 @@
 
 Lua plugins for [Maki](https://github.com/tontinton/maki): keep an agent
 working toward a goal, get notified when a background command makes progress
-or finishes, switch between providers, and optionally use RunInfra's own model
-discovery.
+or finishes, switch between providers, and optionally use the official RunInfra
+and Fireworks AI model APIs for discovery.
 
 **Goals, monitors, and provider switching require Maki 0.6.0 or later.**
-The optional RunInfra provider requires Maki 0.6.3 or later, which includes the
-explicit provider selection API described below. Use Maki's interactive terminal
-UI for the examples. If you have not installed Maki, start with its
+The optional RunInfra and Fireworks AI providers require Maki 0.6.3 or later.
+This version includes the explicit provider selection API described below.
+Use Maki's interactive terminal UI for the examples. If you have not installed
+Maki, start with its
 [installation guide](https://github.com/tontinton/maki#installation).
 
 ## Install
@@ -25,9 +26,10 @@ UI for the examples. If you have not installed Maki, start with its
    reads and writes saved goal state and starts the turns that continue a
    goal. The monitor plugin runs shell commands and can start a turn when a
    wake report arrives. RunInfra needs environment access for its key and
-   network access to `api.runinfra.ai`. To have this package implement
-   RunInfra, select it in `providers.toml` as shown in
-   [Optional RunInfra provider](#optional-runinfra-provider).
+   network access to `api.runinfra.ai`. Fireworks AI needs network access to
+   `api.fireworks.ai` and environment access for its key. Select each provider
+   in `providers.toml` as shown in [Optional RunInfra provider](#optional-runinfra-provider)
+   and [Optional Fireworks AI provider](#optional-fireworks-ai-provider).
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`
 
@@ -180,6 +182,56 @@ load, RunInfra stays unavailable; Maki does not fall back to the generic
 client. Removing `plugin` and reloading restores it. The network host
 permission and Maki's existing provider checks still apply.
 
+## Optional Fireworks AI provider
+
+Maki calls Fireworks AI `fireworks-ai`, which is its Models.dev provider name.
+This package can replace that catalog entry with authenticated discovery from
+the official [Fireworks List Models API](https://docs.fireworks.ai/api-reference/list-models).
+It uses Maki's existing provider selection API. No change to Maki is required.
+
+1. Add this entry to `~/.config/maki/providers.toml`. Keep existing Fireworks
+   settings in the same entry:
+
+   ```toml
+   [fireworks-ai]
+   plugin = "maki-essential-plugins"
+   ```
+
+2. Use `/reload`, or restart Maki, to load the selection.
+3. Use your saved `fireworks-ai` key, set `FIREWORKS_API_KEY` before startup, or
+   log in with `maki auth login fireworks-ai`. Get a key from the
+   [Fireworks dashboard](https://app.fireworks.ai/settings/users/api-keys).
+4. Open `/model` to refresh discovery. You can also select a model directly:
+
+   ```sh
+   maki -m fireworks-ai/accounts/fireworks/models/glm-5p3-flash
+   ```
+
+The plugin calls `/v1/accounts/fireworks/models` with the documented
+[`supports_serverless=true` filter](https://docs.fireworks.ai/faq-new/models-inference/how-to-check-if-a-model-is-available-on-serverless).
+It reads every page, keeps models with a chat configuration, and preserves the
+full `accounts/fireworks/models/...` inference IDs. It uses positive context
+limits and the published image support flag. Dedicated deployments, embeddings,
+and models without chat support do not appear in discovery. You can still select
+an explicit model ID, subject to Fireworks account access and Maki's model policy.
+
+Discovery leaves output limits, reasoning capabilities, and token prices
+unspecified. Maki can fill these fields from Models.dev or local model settings.
+The plugin adds no default output cap for models without a published limit.
+
+Chat requests use the OpenAI-compatible `/inference/v1/chat/completions` endpoint.
+To use a gateway, set `FIREWORKS_AI_BASE_URL` to its inference base URL without a
+final slash. The plugin changes the final `/inference/v1` to `/v1` for model
+discovery. It keeps the same host and any path prefix, so the gateway must also
+support the management API.
+For example, `https://gateway.example/fireworks/inference/v1` uses
+`https://gateway.example/fireworks/v1/accounts/fireworks/models` for discovery.
+
+Installing this package alone does not replace the Models.dev entry. The
+selection binds the saved key to this package. If the selected plugin cannot
+load, the provider stays unavailable. Remove `plugin` and reload to restore
+Maki's catalog client.
+
 ## Update
 
 Use `/packupdate maki-essential-plugins` to review updates.
@@ -201,13 +253,16 @@ Run the Lua state tests and formatting check from the repository root:
 ```sh
 LUA_PATH='./lua/?.lua;;' lua tests/spec.lua
 lua tests/runinfra.lua
+lua tests/fireworks.lua
 stylua --check lua plugin tests
 ```
 
 The integration tests load this package in Maki's real Lua runtime, run shell
 jobs, and exercise goal events, provider switching, and picker keys. With the
 provider selection API present, they also replay fixed RunInfra responses and
-check saved keys, stale catalog metadata, and request effort settings. They use temporary XDG
+check saved keys, stale catalog metadata, and request effort settings. Fireworks
+tests check pagination, model filters, saved and environment keys, gateway paths,
+chat requests, and discovery errors. They use temporary XDG
 directories and recorded local HTTP responses; they do not call a remote model
 or use your saved Maki configuration.
 Install Python 3.11+, Rust 1.99.0, and `cargo-nextest`, then point the runner at
