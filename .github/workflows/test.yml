@@ -35,7 +35,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        maki_ref: [v0.6.0, main]
+        # bb2ef48 merged maki PR #1343, the oldest commit this package supports.
+        maki_ref: [bb2ef483bc8e14faf25fee180ed5f79d0ffa6416, main]
     env:
       OPENSSL_NO_VENDOR: "1"
     steps:

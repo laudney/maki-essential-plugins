@@ -5,11 +5,22 @@ working toward a goal, get notified when a background command makes progress
 or finishes, switch between providers, and optionally use the official RunInfra
 and Fireworks AI model APIs for discovery.
 
-**Goals, monitors, and provider switching require Maki 0.6.0 or later.**
-The optional RunInfra and Fireworks AI providers require Maki 0.6.3 or later.
-This version includes the explicit provider selection API described below.
-Use Maki's interactive terminal UI for the examples. If you have not installed
-Maki, start with its
+**This package requires Maki built from upstream `main` at commit
+[`bb2ef48`](https://github.com/tontinton/maki/commit/bb2ef483bc8e14faf25fee180ed5f79d0ffa6416)
+or later.** That commit merged
+[Maki PR #1343](https://github.com/tontinton/maki/pull/1343), which added the
+session permissions this package requests. No Maki release includes it yet, so
+the package does not support the 0.6.0 to 0.6.5 releases. Upstream `main` still
+reports version 0.6.5, so the `min_maki_version` check stops only releases
+older than 0.6.5, and the 0.6.5 release still loads the package. Install Maki
+from source:
+
+```sh
+cargo install --locked --git https://github.com/tontinton/maki.git maki
+```
+
+Use Maki's interactive terminal UI for the examples. For other ways to install
+Maki, see its
 [installation guide](https://github.com/tontinton/maki#installation).
 
 ## Install
@@ -148,8 +159,7 @@ in `providers.toml`.
 The selection API is `maki.provider.is_selected` and the `providers.toml`
 `plugin` field, merged in
 [Maki PR #1216](https://github.com/tontinton/maki/pull/1216) and released in
-Maki 0.6.3. Goals and monitors still load on Maki releases that lack provider
-selection.
+Maki 0.6.3. The commit this package requires already includes it.
 
 To enable it:
 
@@ -283,10 +293,10 @@ with system OpenSSL, set `OPENSSL_NO_VENDOR=1` as described in Maki's build
 instructions. Build files are cached in `.cache/runtime/`, or in
 `CARGO_TARGET_DIR` if set.
 
-CI tests upstream `v0.6.0` and `main` on each push and pull request, and weekly
-to detect upstream API changes. It also checks Lua state tests, Python lint,
-and formatting. The runner enables provider tests only when the source checkout
-contains the selection API. Reused Maki code and fixed fixtures are documented
+CI tests upstream commit `bb2ef48`, the oldest supported Maki, and `main` on
+each push and pull request, and weekly to detect upstream API changes. It also
+checks Lua state tests, Python lint, and formatting. The runner enables
+provider tests only when the source checkout contains the selection API. Reused Maki code and fixed fixtures are documented
 in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## License
