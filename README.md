@@ -25,10 +25,14 @@ Maki, start with its
 3. Review and approve the package permissions when Maki asks. The goal plugin
    reads and writes saved goal state and starts the turns that continue a
    goal. The monitor plugin runs shell commands and can start a turn when a
-   wake report arrives. RunInfra needs environment access for its key and
-   network access to `api.runinfra.ai`. Fireworks AI needs network access to
-   `api.fireworks.ai` and environment access for its key. Select each provider
-   in `providers.toml` as shown in [Optional RunInfra provider](#optional-runinfra-provider)
+   wake report arrives. Both post notices into the session, which needs
+   `session_write`. The `/provider` command switches the session model, which
+   needs `session_settings`. No plugin reads the conversation, so the package
+   does not ask for `session_read`. RunInfra needs environment access for its
+   key and network access to `api.runinfra.ai`. Fireworks AI needs network
+   access to `api.fireworks.ai` and environment access for its key. Select
+   each provider in `providers.toml` as shown in
+   [Optional RunInfra provider](#optional-runinfra-provider)
    and [Optional Fireworks AI provider](#optional-fireworks-ai-provider).
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`

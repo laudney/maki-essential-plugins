@@ -59,7 +59,7 @@ local function load_state(session_id)
   if not content then
     return nil, "cannot read goal state: " .. tostring(read_err)
   end
-  local document, decode_err = maki.json.decode(content)
+  local document, decode_err = maki.json.decode(content, { luanil = { object = true, array = true } })
   if not document then
     return nil, "cannot decode goal state: " .. tostring(decode_err)
   end

@@ -104,6 +104,25 @@ fn corrupt_state_is_reported_without_overwriting_it() {
 }
 
 #[test]
+fn null_optional_state_field_reads_as_absent() {
+    let runtime = Runtime::new();
+    runtime.goal_running();
+    let path = PathBuf::from(std::env::var("XDG_STATE_HOME").unwrap())
+        .join("maki/goals/sessions")
+        .join(format!(
+            "{}.json",
+            runtime.ctx.session_id.as_ref().unwrap().as_str()
+        ));
+    let mut document: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    document["goal"]["summary"] = serde_json::Value::Null;
+    fs::write(&path, document.to_string()).unwrap();
+    let result = runtime.call("get_goal", json!({})).unwrap();
+    assert!(result.contains("Status: active"), "{result}");
+    assert!(!result.contains("Summary"), "{result}");
+}
+
+#[test]
 fn focus_and_background_reset_preserve_the_focused_goal_hint() {
     let runtime = Runtime::new();
     runtime.goal_running();

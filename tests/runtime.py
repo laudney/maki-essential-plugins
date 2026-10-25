@@ -56,7 +56,12 @@ def main():
         "[dependencies]",
     ]
     for name in ("maki-agent", "maki-config", "maki-lua", "maki-storage"):
-        manifest.append(f"{name} = {toml_value({'path': str(source / name)})}")
+        dependency = {"path": str(source / name)}
+        crate = tomllib.loads((source / name / "Cargo.toml").read_text())
+        # Newer Maki builds keep the raw `fire_autocmd` behind this feature.
+        if "test-support" in crate.get("features", {}):
+            dependency["features"] = ["test-support"]
+        manifest.append(f"{name} = {toml_value(dependency)}")
     if provider_selection:
         manifest.append(
             "maki-providers = "
