@@ -123,6 +123,24 @@ fn null_optional_state_field_reads_as_absent() {
 }
 
 #[test]
+fn content_events_arrive_without_a_permission_warning() {
+    let runtime = Runtime::new();
+    runtime.goal_running();
+    while runtime.flashes.try_recv().is_ok() {}
+    runtime.fire("TurnStart", json!({"text": "continue"}));
+    runtime.fire(
+        "ToolDone",
+        json!({"tool": "bash", "input": {"command": "ls"}}),
+    );
+    runtime.call("get_goal", json!({})).unwrap();
+    let flashes: Vec<String> = runtime.flashes.try_iter().collect();
+    assert!(
+        flashes.iter().all(|flash| !flash.contains("session_read")),
+        "{flashes:?}"
+    );
+}
+
+#[test]
 fn focus_and_background_reset_preserve_the_focused_goal_hint() {
     let runtime = Runtime::new();
     runtime.goal_running();
