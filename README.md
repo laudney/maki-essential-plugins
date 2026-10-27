@@ -43,10 +43,9 @@ Maki, see its
    only their session id and never reads the conversation. RunInfra needs
    environment access for its key and network access to `api.runinfra.ai`.
    Fireworks AI needs network access to `api.fireworks.ai` and environment
-   access for its key. Select
-   each provider in `providers.toml` as shown in
-   [Optional RunInfra provider](#optional-runinfra-provider)
-   and [Optional Fireworks AI provider](#optional-fireworks-ai-provider).
+   access for its key. The prompt also grants the package the `runinfra` and
+   `fireworks-ai` provider names, as shown in
+   [Provider names](#provider-names).
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`
 
@@ -148,31 +147,39 @@ require the interactive UI; a headless run does not keep a watcher alive after
 Maki exits. Some forks also show a compact report in the transcript. Upstream
 Maki receives the same report through its session mailbox.
 
-## Optional RunInfra provider
+## Provider names
+
+`plugin.toml` lists the provider names this package implements:
+
+```toml
+providers = ["runinfra", "fireworks-ai"]
+```
+
+Maki shows them in the install approval prompt. Once you approve, the package
+owns both names and receives the keys saved under them, and the generic
+Models.dev client cannot take them over. Nothing goes in `providers.toml`.
+
+An approval recorded before this list existed covers no name. Update the
+package and start the interactive UI once, so Maki asks again. A headless
+`maki acp` run cannot ask, so approve in the UI first.
+
+If you upgraded from an older setup, remove any
+`plugin = "maki-essential-plugins"` line from `~/.config/maki/providers.toml`.
+Maki still honours it, but warns at every start until it is gone.
+
+Maki before
+[1fa792da](https://github.com/tontinton/maki/commit/1fa792da567a2fbb26b2a1bb2bb9af85d93201c9)
+ignores the list and selects through `providers.toml` instead: add
+`plugin = "maki-essential-plugins"` under `[runinfra]` and `[fireworks-ai]`
+there.
+
+## RunInfra provider
 
 RunInfra works without this package. Maki reaches it through its
 [Models.dev](https://models.dev/) entry with the generic OpenAI-compatible
 client, so a key saved under `runinfra` keeps working. This package implements
-RunInfra, including its authenticated model discovery, only when you select it
-in `providers.toml`.
-
-The selection API is `maki.provider.is_selected` and the `providers.toml`
-`plugin` field, merged in
-[Maki PR #1216](https://github.com/tontinton/maki/pull/1216) and released in
-Maki 0.6.3. The commit this package requires already includes it.
-
-To enable it:
-
-1. Add the selection to `~/.config/maki/providers.toml`, keeping any existing
-   RunInfra settings in the same entry:
-
-   ```toml
-   [runinfra]
-   plugin = "maki-essential-plugins"
-   ```
-
-2. Reload plugins with `/reload`, or restart Maki. Maki reads the selection
-   when plugins load.
+RunInfra, including its authenticated model discovery, once Maki grants it the
+name (see [Provider names](#provider-names)).
 
 Existing `runinfra/<model>` settings and keys saved under `runinfra` still
 work. To use an environment key, set `RUNINFRA_GATEWAY_KEY` before starting
@@ -191,33 +198,24 @@ modalities, and reasoning effort levels. Prices stay in USD per million
 tokens. Absent or invalid token limits and incomplete input/output prices
 stay unspecified.
 
-The explicit selection identifies which installed package may receive the
-saved key for `runinfra`. Installing this package alone does not replace the
-catalog-backed implementation. If the selected package is missing or fails to
-load, RunInfra stays unavailable; Maki does not fall back to the generic
-client. Removing `plugin` and reloading restores it. The network host
-permission and Maki's existing provider checks still apply.
+The granted name identifies which installed package may receive the saved
+key for `runinfra`. If the installed package fails to load, RunInfra stays
+unavailable; Maki does not fall back to the generic client. A package that is
+removed or disabled releases the name, and the generic client serves it again.
+The network host permission and Maki's existing provider checks still apply.
 
-## Optional Fireworks AI provider
+## Fireworks AI provider
 
 Maki calls Fireworks AI `fireworks-ai`, which is its Models.dev provider name.
 This package can replace that catalog entry with authenticated discovery from
 the official [Fireworks List Models API](https://docs.fireworks.ai/api-reference/list-models).
-It uses Maki's existing provider selection API. No change to Maki is required.
+It takes over once Maki grants the package the name (see
+[Provider names](#provider-names)).
 
-1. Add this entry to `~/.config/maki/providers.toml`. Keep existing Fireworks
-   settings in the same entry:
-
-   ```toml
-   [fireworks-ai]
-   plugin = "maki-essential-plugins"
-   ```
-
-2. Use `/reload`, or restart Maki, to load the selection.
-3. Use your saved `fireworks-ai` key, set `FIREWORKS_API_KEY` before startup, or
+1. Use your saved `fireworks-ai` key, set `FIREWORKS_API_KEY` before startup, or
    log in with `maki auth login fireworks-ai`. Get a key from the
    [Fireworks dashboard](https://app.fireworks.ai/settings/users/api-keys).
-4. Open `/model` to refresh discovery. You can also select a model directly:
+2. Open `/model` to refresh discovery. You can also select a model directly:
 
    ```sh
    maki -m fireworks-ai/accounts/fireworks/models/glm-5p3-flash
@@ -243,10 +241,9 @@ support the management API.
 For example, `https://gateway.example/fireworks/inference/v1` uses
 `https://gateway.example/fireworks/v1/accounts/fireworks/models` for discovery.
 
-Installing this package alone does not replace the Models.dev entry. The
-selection binds the saved key to this package. If the selected plugin cannot
-load, the provider stays unavailable. Remove `plugin` and reload to restore
-Maki's catalog client.
+The granted name binds the saved key to this package. If the installed plugin
+fails to load, the provider stays unavailable; Maki does not fall back to its
+catalog client. A package that is removed or disabled releases the name.
 
 ## Update
 
