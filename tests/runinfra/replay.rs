@@ -19,7 +19,7 @@ use test_case::test_case;
 
 use super::{
     Canned, KEY_ENV, Model, Runtime, SLUG, Timeouts, base_url_env_var, isolated_state,
-    model_registry, plugin, serve,
+    model_registry, plugin, runtime, serve,
 };
 
 const API_KEY: &str = "sk-replay";
@@ -90,7 +90,7 @@ impl Answer {
 #[test_case("off_without_none" ; "off_without_none")]
 #[test_case("undeclared_efforts_leave_default" ; "undeclared_efforts_preserve_default")]
 fn fixed_golden_replays(case: &str) {
-    let _home = isolated_state(true);
+    let _home = isolated_state();
     let package = PathBuf::from(env::var("MAKI_ESSENTIAL_PACKAGE").unwrap());
     let path = package
         .join("tests/goldens/runinfra")
@@ -102,11 +102,11 @@ fn fixed_golden_replays(case: &str) {
         env::set_var(base_url_env_var(SLUG), base_url);
         env::set_var(KEY_ENV, API_KEY);
     }
-    let _runtime = Runtime::new();
+    let _runtime = Runtime::with_provider_grants(&[SLUG]);
     let provider = plugin::create(SLUG, Timeouts::default()).unwrap();
     let observed = match golden.call {
         Call::Models {} => json!({
-            "outcome": listing(&smol::block_on(provider.list_models())),
+            "outcome": listing(&runtime().block_on(provider.list_models())),
             "requests": recorded(&requests),
         }),
         Call::Discovered(turn) => {
@@ -114,7 +114,7 @@ fn fixed_golden_replays(case: &str) {
             if let Some(support) = turn.thinking_override {
                 model.thinking_override = Some(support);
             }
-            let models = smol::block_on(provider.list_models());
+            let models = runtime().block_on(provider.list_models());
             if let Ok(models) = &models {
                 model_registry::set_known_models(SLUG, models.clone());
             }
@@ -165,7 +165,7 @@ fn exchange(
         .unwrap_or_else(|| vec![Message::user(PROMPT.to_owned())]);
     let tools = turn.tools.unwrap_or_else(tools);
     let (tx, rx) = flume::unbounded();
-    let result = smol::block_on(provider.stream_message(
+    let result = runtime().block_on(provider.stream_message(
         model,
         &messages,
         SYSTEM,

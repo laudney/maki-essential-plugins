@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 
 use maki_config::providers::base_url_env_var;
+use maki_lua::test_support::runtime;
 use maki_providers::model_registry;
 use maki_providers::plugin;
 use maki_providers::provider::{available_model_specs, from_model};
@@ -10,10 +11,9 @@ use maki_providers::{Model, ModelPricing, Timeouts, catalog_provider, warm_catal
 use maki_storage::StateDir;
 use maki_storage::auth::{ProviderCredentials, save_provider_credentials};
 use serde_json::{Value, json};
-use tempfile::TempDir;
 use test_case::test_case;
 
-use super::{PACKAGE, Runtime};
+use super::{Runtime, isolated_state};
 
 mod replay;
 
@@ -32,36 +32,7 @@ const CATALOG_CONTEXT: u32 = 4096;
 const LIVE_CONTEXT: u32 = 262144;
 const MODELS_GOLDEN: &str = include_str!("goldens/runinfra/models.json");
 const MODELS_PATH: &str = "/v1/models";
-const PROVIDERS_FILE: &str = "providers.toml";
 const CATALOG_FILE: &str = "models-dev-catalog.json";
-const HOME_VARS: &[&str] = &[
-    "HOME",
-    "XDG_STATE_HOME",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-    "XDG_CACHE_HOME",
-];
-
-fn isolated_state(selected: bool) -> TempDir {
-    let home = TempDir::new().unwrap();
-    for name in HOME_VARS {
-        unsafe { env::set_var(name, home.path()) };
-    }
-    for name in [KEY_ENV, LEGACY_KEY_ENV] {
-        unsafe { env::remove_var(name) };
-    }
-    unsafe { env::remove_var(base_url_env_var(SLUG)) };
-    let config = maki_storage::paths::config_dir().unwrap();
-    fs::create_dir_all(&config).unwrap();
-    if selected {
-        fs::write(
-            config.join(PROVIDERS_FILE),
-            format!("[{SLUG}]\nplugin = \"{PACKAGE}\"\n"),
-        )
-        .unwrap();
-    }
-    home
-}
 
 fn stale_catalog() {
     let cache = maki_storage::paths::cache_dir().unwrap();
@@ -89,7 +60,7 @@ fn model_server() -> (String, Requests) {
 
 #[test]
 fn unselected_package_keeps_goal_and_monitor_without_runinfra() {
-    let _home = isolated_state(false);
+    let _home = isolated_state();
     stale_catalog();
     let runtime = Runtime::new();
     assert!(runtime.registry.get("get_goal").is_some());
@@ -99,7 +70,7 @@ fn unselected_package_keeps_goal_and_monitor_without_runinfra() {
 
 #[test]
 fn selected_package_uses_saved_key_and_live_metadata_over_cached_catalog() {
-    let _home = isolated_state(true);
+    let _home = isolated_state();
     stale_catalog();
     warm_catalog();
     let catalog = catalog_provider(SLUG).unwrap();
@@ -116,10 +87,10 @@ fn selected_package_uses_saved_key_and_live_metadata_over_cached_catalog() {
     .unwrap();
     let (base_url, requests) = model_server();
     unsafe { env::set_var(base_url_env_var(SLUG), base_url) };
-    let _runtime = Runtime::new();
+    let _runtime = Runtime::with_provider_grants(&[SLUG]);
     let mut model = Model::from_spec(MODEL).unwrap();
     let provider = from_model(&mut model, Timeouts::default()).unwrap();
-    let models = smol::block_on(provider.list_models()).unwrap();
+    let models = runtime().block_on(provider.list_models()).unwrap();
     assert!(models.iter().all(|model| model.id != OBSOLETE_MODEL_ID));
     model_registry::set_known_models(SLUG, models);
 
@@ -153,7 +124,7 @@ fn declared_key_reaches_authenticated_discovery(
     legacy: Option<&str>,
     expected: &str,
 ) {
-    let _home = isolated_state(true);
+    let _home = isolated_state();
     for (name, key) in [(KEY_ENV, gateway), (LEGACY_KEY_ENV, legacy)] {
         if let Some(key) = key {
             unsafe { env::set_var(name, key) };
@@ -161,9 +132,9 @@ fn declared_key_reaches_authenticated_discovery(
     }
     let (base_url, requests) = model_server();
     unsafe { env::set_var(base_url_env_var(SLUG), base_url) };
-    let _runtime = Runtime::new();
+    let _runtime = Runtime::with_provider_grants(&[SLUG]);
     let provider = plugin::create(SLUG, Timeouts::default()).unwrap();
-    smol::block_on(provider.list_models()).unwrap();
+    runtime().block_on(provider.list_models()).unwrap();
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].authorization(), format!("Bearer {expected}"));

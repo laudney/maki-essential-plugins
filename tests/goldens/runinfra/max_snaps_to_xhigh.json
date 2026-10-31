@@ -50,7 +50,7 @@
         "body": "",
         "headers": {
           "accept": "*/*",
-          "accept-encoding": "deflate, gzip",
+          "accept-encoding": "gzip,deflate",
           "authorization": "Bearer sk-replay",
           "host": "<volatile>",
           "user-agent": "<volatile>"
@@ -62,7 +62,7 @@
         "body": "{\"messages\":[{\"content\":\"You are a replay fixture.\",\"role\":\"system\"},{\"content\":\"read a.txt\",\"role\":\"user\"}],\"model\":\"qwen3-8-27b\",\"reasoning_effort\":\"xhigh\",\"stream\":true,\"stream_options\":{\"include_usage\":true},\"tools\":[{\"function\":{\"description\":\"Read a file\",\"name\":\"read\",\"parameters\":{\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"],\"type\":\"object\"}},\"type\":\"function\"}]}",
         "headers": {
           "accept": "*/*",
-          "accept-encoding": "deflate, gzip",
+          "accept-encoding": "gzip,deflate",
           "authorization": "Bearer sk-replay",
           "host": "<volatile>",
           "user-agent": "<volatile>",

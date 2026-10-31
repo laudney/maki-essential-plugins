@@ -38,40 +38,39 @@ def main():
     package = Path(__file__).resolve().parent.parent
     workspace = tomllib.loads((source / "Cargo.toml").read_text())
     dependencies = workspace["workspace"]["dependencies"]
-    provider_api = source / "maki-lua/src/api/provider.rs"
-    provider_selection = (
-        provider_api.exists() and "fn is_selected(" in provider_api.read_text()
-    )
     manifest = [
         "[package]",
         'name = "maki-essential-runtime-tests"',
         'version = "0.0.0"',
         'edition = "2024"',
-        "[features]",
-        "notice_envelope = []",
-        "provider_selection = []",
         "[[test]]",
         'name = "runtime"',
         f"path = {toml_value(str(package / 'tests/runtime.rs'))}",
         "[dependencies]",
     ]
-    for name in ("maki-agent", "maki-config", "maki-lua", "maki-storage"):
+    for name in (
+        "maki-agent",
+        "maki-config",
+        "maki-lua",
+        "maki-pack",
+        "maki-providers",
+        "maki-storage",
+    ):
         dependency = {"path": str(source / name)}
         crate = tomllib.loads((source / name / "Cargo.toml").read_text())
         # Newer Maki builds keep the raw `fire_autocmd` behind this feature.
         if "test-support" in crate.get("features", {}):
             dependency["features"] = ["test-support"]
         manifest.append(f"{name} = {toml_value(dependency)}")
-    if provider_selection:
-        manifest.append(
-            "maki-providers = "
-            + toml_value(
-                {"path": str(source / "maki-providers"), "features": ["test-support"]}
-            )
-        )
-    shared_dependencies = ["flume", "serde_json", "smol", "toml"]
-    if provider_selection:
-        shared_dependencies.extend(["serde", "tempfile", "test-case"])
+    shared_dependencies = [
+        "flume",
+        "serde_json",
+        "tokio",
+        "toml",
+        "serde",
+        "tempfile",
+        "test-case",
+    ]
     for name in shared_dependencies:
         manifest.append(f"{name} = {toml_value(dependencies[name])}")
     manifest.extend(
@@ -89,20 +88,6 @@ def main():
         env.setdefault("CARGO_TARGET_DIR", str(package / ".cache/runtime"))
         cargo = ["cargo", f"+{args.toolchain}"]
         options = ["--manifest-path", str(root / "Cargo.toml")]
-        features = []
-        mailbox_sources = [
-            source / "maki-agent/src/mailbox.rs",
-            source / "maki-agent/src/live_session.rs",
-        ]
-        if any(
-            path.exists() and "pub struct Notice" in path.read_text()
-            for path in mailbox_sources
-        ):
-            features.append("notice_envelope")
-        if provider_selection:
-            features.append("provider_selection")
-        if features:
-            options.extend(["--features", ",".join(features)])
         if args.lint:
             subprocess.run(
                 cargo

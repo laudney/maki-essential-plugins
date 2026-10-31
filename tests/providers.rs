@@ -1,7 +1,9 @@
-use super::{PACKAGE, Runtime, WAIT_LIMIT, Window};
+use super::{PACKAGE, Runtime, WAIT_LIMIT, Window, isolated_state};
+use maki_providers::plugin;
 use maki_storage::id::MakiId;
 use serde_json::json;
 use std::sync::Arc;
+use test_case::test_case;
 
 const FIRST: &str = "alpha/first";
 const SECOND: &str = "alpha/second";
@@ -165,4 +167,22 @@ fn session_end_and_package_unload_close_the_picker() {
     runtime.host.unload(PACKAGE).unwrap();
     models.closed();
     assert!(runtime.selected_models().is_empty());
+}
+
+#[test_case(&[] ; "no_provider_names_approved")]
+#[test_case(&["runinfra"] ; "runinfra_only")]
+#[test_case(&["fireworks-ai"] ; "fireworks_only")]
+#[test_case(&["runinfra", "fireworks-ai"] ; "both_manifest_names")]
+fn manifest_provider_names_require_an_explicit_grant(granted: &[&str]) {
+    let _home = isolated_state();
+    let runtime = Runtime::with_provider_grants(granted);
+    assert!(runtime.registry.get("get_goal").is_some());
+    assert!(runtime.registry.get("monitor").is_some());
+    for slug in ["runinfra", "fireworks-ai"] {
+        assert_eq!(
+            plugin::is_registered(slug),
+            granted.contains(&slug),
+            "{slug}"
+        );
+    }
 }

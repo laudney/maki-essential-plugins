@@ -5,23 +5,13 @@ working toward a goal, get notified when a background command makes progress
 or finishes, switch between providers, and optionally use the official RunInfra
 and Fireworks AI model APIs for discovery.
 
-**This package requires Maki built from upstream `main` at commit
-[`bb2ef48`](https://github.com/tontinton/maki/commit/bb2ef483bc8e14faf25fee180ed5f79d0ffa6416)
-or later.** That commit merged
-[Maki PR #1343](https://github.com/tontinton/maki/pull/1343), which added the
-session permissions this package requests. No Maki release includes it yet, so
-the package does not support the 0.6.0 to 0.6.5 releases. Upstream `main` still
-reports version 0.6.5, so the `min_maki_version` check stops only releases
-older than 0.6.5, and the 0.6.5 release still loads the package. Install Maki
-from source:
+**Requires [Maki 0.7.0](https://github.com/tontinton/maki/releases/tag/v0.7.0)
+or later.** This is the first release with the session permissions and
+provider ownership APIs this package uses. The manifest enforces this
+minimum version.
 
-```sh
-cargo install --locked --git https://github.com/tontinton/maki.git maki
-```
-
-Use Maki's interactive terminal UI for the examples. For other ways to install
-Maki, see its
-[installation guide](https://github.com/tontinton/maki#installation).
+Use Maki's interactive terminal UI for the examples. For installation steps,
+see Maki's [installation guide](https://github.com/tontinton/maki#installation).
 
 ## Install
 
@@ -113,6 +103,10 @@ not automatically restart its goal.
 
 ## Try a monitor
 
+Maki 0.7 has built-in background commands and subagents. Use a monitor when
+you need reports for matching log lines. `/monitors` manages these watchers;
+`/tasks` manages Maki's built-in background work.
+
 Ask the agent to watch a command. For a Rust project, for example:
 
 ```text
@@ -144,8 +138,9 @@ limit notice; the exit report is separate.
 Monitors belong to the session that started them. They stop when that session
 ends, the package reloads, or Maki exits. The picker and automatic wake examples
 require the interactive UI; a headless run does not keep a watcher alive after
-Maki exits. Some forks also show a compact report in the transcript. Upstream
-Maki receives the same report through its session mailbox.
+Maki exits. Reports appear as compact transcript notices when Maki accepts
+them into a turn. The model receives the full report through the session
+mailbox.
 
 ## Provider names
 
@@ -166,12 +161,6 @@ package and start the interactive UI once, so Maki asks again. A headless
 If you upgraded from an older setup, remove any
 `plugin = "maki-essential-plugins"` line from `~/.config/maki/providers.toml`.
 Maki still honours it, but warns at every start until it is gone.
-
-Maki before
-[1fa792da](https://github.com/tontinton/maki/commit/1fa792da567a2fbb26b2a1bb2bb9af85d93201c9)
-ignores the list and selects through `providers.toml` instead: add
-`plugin = "maki-essential-plugins"` under `[runinfra]` and `[fireworks-ai]`
-there.
 
 ## RunInfra provider
 
@@ -271,10 +260,10 @@ stylua --check lua plugin tests
 ```
 
 The integration tests load this package in Maki's real Lua runtime, run shell
-jobs, and exercise goal events, provider switching, and picker keys. With the
-provider selection API present, they also replay fixed RunInfra responses and
-check saved keys, stale catalog metadata, and request effort settings. Fireworks
-tests check pagination, model filters, saved and environment keys, gateway paths,
+jobs, and exercise goal events, provider switching, and picker keys. They also
+replay fixed RunInfra responses and check saved keys, stale catalog metadata,
+and request effort settings. Fireworks tests check pagination, model filters,
+saved and environment keys, gateway paths,
 chat requests, and discovery errors. They use temporary XDG
 directories and recorded local HTTP responses; they do not call a remote model
 or use your saved Maki configuration.
@@ -290,10 +279,10 @@ with system OpenSSL, set `OPENSSL_NO_VENDOR=1` as described in Maki's build
 instructions. Build files are cached in `.cache/runtime/`, or in
 `CARGO_TARGET_DIR` if set.
 
-CI tests upstream commit `bb2ef48`, the oldest supported Maki, and `main` on
+CI tests Maki `v0.7.0`, the minimum supported release, and upstream `main` on
 each push and pull request, and weekly to detect upstream API changes. It also
-checks Lua state tests, Python lint, and formatting. The runner enables
-provider tests only when the source checkout contains the selection API. Reused Maki code and fixed fixtures are documented
+checks Lua state tests, Python lint, and formatting. Provider tests run on
+both targets. Reused Maki code and fixed fixtures are documented
 in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## License

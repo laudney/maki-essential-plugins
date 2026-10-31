@@ -5,18 +5,47 @@ use std::time::{Duration, Instant};
 
 use maki_agent::SessionMailbox;
 use maki_agent::tools::{ToolContext, ToolRegistry, cli_tool_ctx};
+use maki_lua::test_support::runtime;
 use maki_lua::{
-    Key, ModelRequest, Permission, PluginHost, PluginPermissions, SessionRequest, UiAction,
-    WinCommand, WinEvent,
+    DiscoveredPackage, Key, ModelRequest, Origin, Permission, PluginHost, PluginPermissions,
+    Requested, SessionRequest, UiAction, WinCommand, WinEvent,
 };
-#[cfg(feature = "provider_selection")]
+use maki_pack::approvals::{ApprovalKey, Approvals};
 use maki_providers::plugin;
 use maki_storage::id::{MakiId, SessionRef};
 use serde_json::{Value, json};
+use tempfile::TempDir;
+use tokio::time::timeout;
+use toml::Value as TomlValue;
 
 const PACKAGE: &str = "maki-essential-plugins";
+const PACKAGE_SOURCE: &str = "https://github.com/laudney/maki-essential-plugins";
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+fn isolated_state() -> TempDir {
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("HOME", home.path()) };
+    for (name, subdir) in [
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_DATA_HOME", "data"),
+        ("XDG_STATE_HOME", "state"),
+        ("XDG_CACHE_HOME", "cache"),
+        ("XDG_RUNTIME_DIR", "runtime"),
+    ] {
+        unsafe { std::env::set_var(name, home.path().join(subdir)) };
+    }
+    for name in [
+        "RUNINFRA_GATEWAY_KEY",
+        "RUNINFRA_API_KEY",
+        "FIREWORKS_API_KEY",
+        "RUNINFRA_BASE_URL",
+        "FIREWORKS_AI_BASE_URL",
+    ] {
+        unsafe { std::env::remove_var(name) };
+    }
+    home
+}
 
 struct Runtime {
     host: PluginHost,
@@ -78,7 +107,7 @@ fn wait_until(mut ready: impl FnMut() -> bool) {
             Instant::now() < until,
             "runtime condition did not become ready"
         );
-        smol::block_on(smol::Timer::after(POLL_INTERVAL));
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
@@ -87,7 +116,15 @@ impl Runtime {
         Self::new_with(|_| {})
     }
 
+    fn with_provider_grants(providers: &[&str]) -> Self {
+        Self::configured(|_| {}, providers)
+    }
+
     fn new_with(adjust: impl FnOnce(&mut PluginPermissions)) -> Self {
+        Self::configured(adjust, &[])
+    }
+
+    fn configured(adjust: impl FnOnce(&mut PluginPermissions), providers: &[&str]) -> Self {
         let registry = Arc::new(ToolRegistry::new());
         let host = PluginHost::new(Arc::clone(&registry)).unwrap();
         let id = MakiId::generate();
@@ -145,29 +182,48 @@ impl Runtime {
             }
         });
         let package = PathBuf::from(std::env::var("MAKI_ESSENTIAL_PACKAGE").unwrap());
-        let manifest: toml::Value =
+        let manifest: TomlValue =
             toml::from_str(&fs::read_to_string(package.join("plugin.toml")).unwrap()).unwrap();
-        let mut permissions = PluginPermissions::denied();
-        for permission in Permission::ALL {
-            let requested = manifest["permissions"]
-                .get(permission.manifest_key())
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(false);
-            permissions.set(*permission, requested);
-        }
-        let net_hosts: Vec<String> = manifest["permissions"]["net_hosts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|host| host.as_str().unwrap().to_owned())
-            .collect();
-        permissions.set_net_hosts(Some(net_hosts.into()));
+        let requested = Requested::from_manifest(&manifest);
+        let mut permissions = requested.clone().granted();
         adjust(&mut permissions);
-        #[cfg(feature = "provider_selection")]
         plugin::begin_load();
-        host.load_package(PACKAGE, &package, permissions, Default::default())
-            .unwrap();
-        #[cfg(feature = "provider_selection")]
+        if providers.is_empty() {
+            host.load_package(PACKAGE, &package, permissions, Default::default())
+                .unwrap();
+        } else {
+            let mut approvals = Approvals::default();
+            approvals.approve(
+                &ApprovalKey::new(PACKAGE, PACKAGE_SOURCE),
+                Permission::ALL
+                    .iter()
+                    .filter(|permission| permissions.is_allowed(**permission))
+                    .map(ToString::to_string)
+                    .collect(),
+                requested.net_hosts().map(<[_]>::to_vec),
+                providers.iter().map(|slug| (*slug).to_owned()).collect(),
+            );
+            let path = maki_lua::approvals_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, serde_json::to_vec(&approvals).unwrap()).unwrap();
+            let warnings = host.load_packages(
+                &[DiscoveredPackage {
+                    name: PACKAGE.to_owned(),
+                    dir: package,
+                    eager: true,
+                    requested,
+                    origin: Origin::Fetched {
+                        src: PACKAGE_SOURCE.to_owned(),
+                    },
+                    revision_guard: None,
+                }],
+                &maki_config::PluginsConfig {
+                    packages: vec![PACKAGE.to_owned()],
+                    ..Default::default()
+                },
+            );
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
         plugin::commit_load();
         let mut ctx = cli_tool_ctx();
         ctx.session_id = Some(SessionRef::from_id(id));
@@ -186,21 +242,12 @@ impl Runtime {
 
     fn call(&self, name: &str, input: Value) -> Result<String, String> {
         let invocation = self.registry.get(name).unwrap().tool.parse(&input).unwrap();
-        smol::block_on(async {
-            smol::future::or(
-                async {
-                    invocation
-                        .execute(&self.ctx)
-                        .await
-                        .output
-                        .map(|output| output.as_text())
-                },
-                async {
-                    smol::Timer::after(WAIT_LIMIT).await;
-                    panic!("tool {name} did not return")
-                },
-            )
-            .await
+        runtime().block_on(async {
+            timeout(WAIT_LIMIT, invocation.execute(&self.ctx))
+                .await
+                .unwrap_or_else(|_| panic!("tool {name} did not return"))
+                .output
+                .map(|output| output.as_text())
         })
     }
 
@@ -230,17 +277,13 @@ impl Runtime {
         self.host
             .hint_reader()
             .load_full()
-            .entries
-            .iter()
-            .flat_map(|(_, spans)| spans.iter().map(|(text, _)| text.as_str()))
+            .visible_in(*self.focused.lock().unwrap())
+            .flat_map(|entry| entry.spans.iter().map(|(text, _)| text.as_str()))
             .collect()
     }
 
     fn notices(&self) -> Vec<String> {
         let notices = self.mailbox.drain();
-        #[cfg(feature = "notice_envelope")]
-        let messages = notices.iter().map(|notice| &notice.message);
-        #[cfg(not(feature = "notice_envelope"))]
         let messages = notices.iter();
         messages
             .map(|message| message.user_text().unwrap().to_owned())
@@ -301,10 +344,8 @@ impl Drop for Gate {
     }
 }
 
-#[cfg(feature = "provider_selection")]
 mod fireworks;
 mod goals;
 mod monitors;
 mod providers;
-#[cfg(feature = "provider_selection")]
 mod runinfra;
