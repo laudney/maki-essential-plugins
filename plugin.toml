@@ -1,4 +1,4 @@
-min_maki_version = "0.6.5"
+min_maki_version = "0.7.0"
 # The provider slugs this package registers, so it owns them and receives
 # their saved keys instead of the generic models.dev client.
 providers = ["runinfra", "fireworks-ai"]

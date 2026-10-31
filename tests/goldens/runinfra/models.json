@@ -98,7 +98,7 @@
         "body": "",
         "headers": {
           "accept": "*/*",
-          "accept-encoding": "deflate, gzip",
+          "accept-encoding": "gzip,deflate",
           "authorization": "Bearer sk-replay",
           "host": "<volatile>",
           "user-agent": "<volatile>"

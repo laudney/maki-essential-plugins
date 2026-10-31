@@ -1,5 +1,6 @@
 use super::{Gate, PACKAGE, Runtime, wait_until};
 use maki_agent::tools::ToolRegistry;
+use maki_lua::test_support::runtime as host_runtime;
 use maki_lua::{Permission, PluginHost, PluginPermissions};
 use maki_storage::id::{MakiId, SessionRef};
 use serde_json::json;
@@ -271,7 +272,9 @@ fn monitor_forces_command_approval_and_requires_run_permission() {
     let runtime = Runtime::new();
     let tool = runtime.registry.get("monitor").unwrap();
     let invocation = tool.tool.parse(&json!({"command": "true"})).unwrap();
-    let scopes = smol::block_on(invocation.permission_scopes()).unwrap();
+    let scopes = host_runtime()
+        .block_on(invocation.permission_scopes())
+        .unwrap();
     assert_eq!(scopes.scopes, ["true"]);
     assert!(scopes.force_prompt);
     let host = PluginHost::new(Arc::new(ToolRegistry::new())).unwrap();
