@@ -674,4 +674,4 @@ maki.api.create_autocmd("SessionFocusChanged", {
 -- A terminal reports Ctrl+M apart from Enter only when it speaks the
 -- Kitty keyboard protocol, which maki asks for at startup. Where it does
 -- not, the key arrives as Enter and its usual binding still works.
-maki.keymap.set("n", "<C-m>", open_picker, { desc = "Open monitors" })
+maki.keymap.set({ "n", "i" }, "<C-m>", open_picker, { desc = "Open monitors" })
