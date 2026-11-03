@@ -496,6 +496,113 @@ case("shutdown_leaves_slots_it_cannot_read_as_its_own", function()
   end
 end)
 
+local inbox = require("speakerbus_inbox")
+
+-- A connection whose reads yield, so a test feeds each chunk by resuming,
+-- and whose timers fire only when the test calls them.
+local function fake_conn()
+  local conn = { lines = {}, closed = 0, timers = {}, max_bytes = 16, idle_ms = 30000 }
+  function conn.read()
+    return coroutine.yield("read")
+  end
+  function conn.close()
+    conn.closed = conn.closed + 1
+  end
+  function conn.after(ms, fn)
+    local timer = { ms = ms, fn = fn, cancelled = false }
+    conn.timers[#conn.timers + 1] = timer
+    return function()
+      timer.cancelled = true
+    end
+  end
+  function conn.on_line(line)
+    conn.lines[#conn.lines + 1] = line
+  end
+  function conn.live_timers()
+    local live = {}
+    for _, timer in ipairs(conn.timers) do
+      if not timer.cancelled then
+        live[#live + 1] = timer
+      end
+    end
+    return live
+  end
+  return conn
+end
+
+local function serving(conn)
+  local co = coroutine.create(function()
+    return inbox.serve(conn)
+  end)
+  assert(coroutine.resume(co))
+  return co
+end
+
+case("each_line_is_handed_on_and_rearms_the_deadline", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  eq(#conn.live_timers(), 1)
+  coroutine.resume(co, "a\nb")
+  eq(#conn.lines, 1)
+  eq(#conn.live_timers(), 1)
+  eq(#conn.timers, 2)
+  coroutine.resume(co, "\n")
+  eq(conn.lines[2], "b")
+  eq(#conn.timers, 3)
+  local _, ok = coroutine.resume(co, nil, nil)
+  eq(ok, true)
+  eq(#conn.live_timers(), 0)
+  eq(conn.closed, 1)
+end)
+
+case("the_deadline_closes_and_drops_an_unfinished_line", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  coroutine.resume(co, "partial")
+  local timer = conn.live_timers()[1]
+  eq(timer.ms, conn.idle_ms)
+  timer.fn()
+  eq(conn.closed, 1)
+  coroutine.resume(co, nil, "connection closed")
+  eq(coroutine.status(co), "dead")
+  eq(#conn.lines, 0)
+end)
+
+case("a_clean_end_hands_on_the_last_line", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  coroutine.resume(co, "tail")
+  coroutine.resume(co, nil, nil)
+  eq(conn.lines[1], "tail")
+end)
+
+case("a_line_at_the_limit_closes_the_connection", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  coroutine.resume(co, string.rep("x", conn.max_bytes) .. "\nok\n")
+  eq(coroutine.status(co), "dead")
+  eq(#conn.lines, 0)
+  eq(conn.closed, 1)
+
+  local unfinished = fake_conn()
+  local more = serving(unfinished)
+  coroutine.resume(more, string.rep("y", unfinished.max_bytes))
+  eq(coroutine.status(more), "dead")
+  eq(#unfinished.lines, 0)
+end)
+
+case("a_failing_handler_is_reported_and_the_connection_closed", function()
+  local conn = fake_conn()
+  conn.on_line = function()
+    error("handler broke")
+  end
+  local co = serving(conn)
+  local _, ok, err = coroutine.resume(co, "x\n")
+  eq(ok, false)
+  assert(tostring(err):find("handler broke", 1, true))
+  eq(conn.closed, 1)
+end)
+
 case("parse_stat_counts_fields_after_the_last_paren", function()
   local stat = "4242 (we (ird) name) S 1 1 1 0 -1 4194560 100 0 0 0 10 5 0 0 20 0 1 0 9991719 1234"
   local pid, start = p.parse_stat(stat)
@@ -611,6 +718,24 @@ case("peer_candidate_needs_the_protocol_fields", function()
   valid.peerProtocol = 2
   eq(p.peer_candidate(valid), false)
   eq(p.peer_candidate(JSON_NULL), false)
+end)
+
+case("ancestors_run_up_to_the_root", function()
+  local list = p.ancestors("/run/user/1000/cc-socks/")
+  eq(table.concat(list, " "), "/run/user/1000/cc-socks /run/user/1000 /run/user /run /")
+end)
+
+case("private_chain_accepts_only_a_tamper_proof_chain", function()
+  local private, user_root, root_dir, sticky_tmp = "1000 41c0", "1000 41c0", "0 41ed", "0 43ff"
+  eq(p.private_chain({ private, user_root, root_dir, root_dir, root_dir }, 1000), true)
+  eq(p.private_chain({ private, sticky_tmp, root_dir }, 1000), true)
+  eq(p.private_chain({ "1000 41ed", root_dir }, 1000), false, "socket dir open to others")
+  eq(p.private_chain({ "1001 41c0", root_dir }, 1000), false, "socket dir owned by someone else")
+  eq(p.private_chain({ private, "1001 41ed", root_dir }, 1000), false, "ancestor owned by someone else")
+  eq(p.private_chain({ private, "0 41ff", root_dir }, 1000), false, "writable ancestor without sticky")
+  eq(p.private_chain({ "1000 a1ff", root_dir }, 1000), false, "a symlink")
+  eq(p.private_chain({ "garbage" }, 1000), false)
+  eq(p.private_chain({}, 1000), false)
 end)
 
 case("uuid_and_accept_policy", function()

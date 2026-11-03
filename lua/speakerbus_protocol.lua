@@ -33,6 +33,16 @@ local NAME_SOURCE = "derived"
 -- Fields of /proc/<pid>/stat that follow the command name: the state is
 -- field 3, so the start time, field 22, is the twentieth.
 local START_TIME_INDEX = 20
+-- Bits of a raw `stat -c %f` mode, as plain numbers so the arithmetic below
+-- runs in Lua 5.x and Luau alike.
+local TYPE_UNIT = 4096
+local TYPE_DIRECTORY = 4
+local PERMISSION_UNIT = 4096
+local PRIVATE_PERMISSIONS = 448
+local GROUP_WRITE = 16
+local OTHER_WRITE = 2
+local STICKY = 512
+local ROOT_UID = 0
 
 local function replace_plain(text, find, replacement)
   local parts, from = {}, 1
@@ -224,6 +234,49 @@ end
 
 function M.uuid(text)
   return text and text:match("^%x+%-%x+%-%x+%-%x+%-%x+")
+end
+
+-- The directory {dir} and every directory above it, ending at "/".
+function M.ancestors(dir)
+  local list = {}
+  local path = dir:gsub("/+$", "")
+  while path ~= "" do
+    list[#list + 1] = path
+    path = path:match("^(.*)/[^/]*$") or ""
+  end
+  list[#list + 1] = "/"
+  return list
+end
+
+local function bit(value, unit)
+  return math.floor(value / unit) % 2 == 1
+end
+
+-- Whether `stat -c '%u %f'` lines for M.ancestors(dir), in that order, show a
+-- socket directory no other user can tamper with: it is a directory owned by
+-- {uid} with mode 0700, and every directory above it belongs to root or
+-- {uid} and is sticky wherever group or others can write it.
+function M.private_chain(lines, uid)
+  for index, line in ipairs(lines) do
+    local owner, raw = line:match("^(%d+) (%x+)$")
+    local mode = raw and tonumber(raw, 16)
+    if not mode or math.floor(mode / TYPE_UNIT) % 16 ~= TYPE_DIRECTORY then
+      return false
+    end
+    owner = tonumber(owner)
+    local permissions = mode % PERMISSION_UNIT
+    if index == 1 then
+      if owner ~= uid or permissions ~= PRIVATE_PERMISSIONS then
+        return false
+      end
+    else
+      local shared = bit(permissions, GROUP_WRITE) or bit(permissions, OTHER_WRITE)
+      if (owner ~= ROOT_UID and owner ~= uid) or (shared and not bit(permissions, STICKY)) then
+        return false
+      end
+    end
+  end
+  return #lines > 0
 end
 
 function M.accept_policy(failures)
