@@ -76,6 +76,22 @@ def main():
     manifest.extend(
         ["[profile.dev]", "debug = 0", '[profile.dev.package."*"]', "debug = 0"]
     )
+    # The tests build against released and unreleased Maki alike: these name
+    # the APIs this source tree has, for the tests to pick what to call.
+    detected = {
+        "async_catalog": (
+            "pub async fn warm_catalog",
+            source / "maki-providers/src/providers/catalog.rs",
+        ),
+        "unix_sockets": ("fn listen_unix", source / "maki-lua/src/api/net/unix.rs"),
+    }
+    manifest.append("[features]")
+    manifest.extend(f"{name} = []" for name in detected)
+    features = [
+        name
+        for name, (marker, path) in detected.items()
+        if path.exists() and marker in path.read_text()
+    ]
 
     with tempfile.TemporaryDirectory(prefix="maki-essential-runtime-") as temporary:
         root = Path(temporary)
@@ -88,6 +104,8 @@ def main():
         env.setdefault("CARGO_TARGET_DIR", str(package / ".cache/runtime"))
         cargo = ["cargo", f"+{args.toolchain}"]
         options = ["--manifest-path", str(root / "Cargo.toml")]
+        if features:
+            options += ["--features", ",".join(features)]
         if args.lint:
             subprocess.run(
                 cargo

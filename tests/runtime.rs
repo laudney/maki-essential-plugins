@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -22,6 +23,14 @@ const PACKAGE: &str = "maki-essential-plugins";
 const PACKAGE_SOURCE: &str = "https://github.com/laudney/maki-essential-plugins";
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+const CLAUDE_CONFIG_ENV: &str = "CLAUDE_CONFIG_DIR";
+const RUNTIME_DIR_ENV: &str = "XDG_RUNTIME_DIR";
+const CLAUDE_DIR: &str = "claude";
+const SESSIONS_DIR: &str = "sessions";
+const RUN_DIR: &str = "run";
+const PRIVATE_DIR: u32 = 0o700;
+const VIEW_CWD: &str = "/work/speakerbus";
+const IDLE: &str = "idle";
 
 fn isolated_state() -> TempDir {
     let home = tempfile::tempdir().unwrap();
@@ -56,6 +65,35 @@ struct Runtime {
     flashes: flume::Receiver<String>,
     windows: flume::Receiver<Window>,
     models: Arc<Mutex<Models>>,
+    #[cfg_attr(not(feature = "unix_sockets"), allow(dead_code))]
+    view: Arc<Mutex<SessionView>>,
+    /// Holds `CLAUDE_CONFIG_DIR` and, for [`Runtime::with_claude`], the
+    /// runtime directory, so no test reaches the user's Claude Code state.
+    #[cfg_attr(not(feature = "unix_sockets"), allow(dead_code))]
+    claude: TempDir,
+}
+
+/// What the UI answers `maki.session.read` and `maki.session.live` with
+/// for the focused session.
+struct SessionView {
+    cwd: String,
+    status: String,
+    /// False makes the UI leave `live` unanswered, as a headless host does.
+    live: bool,
+    /// Focus moves here right after the next `read` is answered, so a test
+    /// can change the session at an exact point of the plugin's activation.
+    focus_after_read: Option<MakiId>,
+}
+
+impl Default for SessionView {
+    fn default() -> Self {
+        Self {
+            cwd: VIEW_CWD.to_owned(),
+            status: IDLE.to_owned(),
+            live: true,
+            focus_after_read: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -100,6 +138,40 @@ impl Window {
     }
 }
 
+/// Points `CLAUDE_CONFIG_DIR` into a fresh temporary directory before any
+/// package loads. When {in_use}, the config's `sessions` directory and a
+/// private runtime directory exist there too. nextest runs each test in its
+/// own process, so the variables never leak between tests.
+fn prepare_claude(in_use: bool) -> TempDir {
+    let claude = tempfile::tempdir().unwrap();
+    let config = claude.path().join(CLAUDE_DIR);
+    unsafe { std::env::set_var(CLAUDE_CONFIG_ENV, &config) };
+    if in_use {
+        fs::create_dir_all(config.join(SESSIONS_DIR)).unwrap();
+        let run = claude.path().join(RUN_DIR);
+        fs::create_dir(&run).unwrap();
+        fs::set_permissions(&run, fs::Permissions::from_mode(PRIVATE_DIR)).unwrap();
+        unsafe { std::env::set_var(RUNTIME_DIR_ENV, &run) };
+    }
+    claude
+}
+
+/// The models.dev catalog warmed, whichever Maki: newer builds load it
+/// without blocking.
+fn warm_catalog_now() {
+    #[cfg(feature = "async_catalog")]
+    runtime().block_on(maki_providers::warm_catalog());
+    #[cfg(not(feature = "async_catalog"))]
+    maki_providers::warm_catalog();
+}
+
+fn catalog_now(slug: &str) -> Option<maki_providers::ProviderData> {
+    #[cfg(feature = "async_catalog")]
+    return runtime().block_on(maki_providers::catalog_provider(slug));
+    #[cfg(not(feature = "async_catalog"))]
+    maki_providers::catalog_provider(slug)
+}
+
 fn wait_until(mut ready: impl FnMut() -> bool) {
     let until = Instant::now() + WAIT_LIMIT;
     while !ready() {
@@ -125,6 +197,38 @@ impl Runtime {
     }
 
     fn configured(adjust: impl FnOnce(&mut PluginPermissions), providers: &[&str]) -> Self {
+        Self::build(adjust, providers, false, SessionView::default(), |_| {})
+    }
+
+    /// A runtime whose Claude Code config exists, so claude-code-speakerbus
+    /// activates, with a private runtime directory for its socket.
+    fn with_claude() -> Self {
+        Self::with_claude_and(|_| {})
+    }
+
+    /// [`Self::with_claude`], with {prepare} run on the temporary root before
+    /// the package loads, for state the plugin must find at activation.
+    fn with_claude_and(prepare: impl FnOnce(&std::path::Path)) -> Self {
+        Self::build(|_| {}, &[], true, SessionView::default(), prepare)
+    }
+
+    /// [`Self::with_claude`] with the UI answering from {view}.
+    #[cfg_attr(not(feature = "unix_sockets"), allow(dead_code))]
+    fn with_claude_view(view: SessionView) -> Self {
+        Self::build(|_| {}, &[], true, view, |_| {})
+    }
+
+    fn build(
+        adjust: impl FnOnce(&mut PluginPermissions),
+        providers: &[&str],
+        claude_in_use: bool,
+        view: SessionView,
+        prepare: impl FnOnce(&std::path::Path),
+    ) -> Self {
+        let claude = prepare_claude(claude_in_use);
+        prepare(claude.path());
+        let view = Arc::new(Mutex::new(view));
+        let ui_view = Arc::clone(&view);
         let registry = Arc::new(ToolRegistry::new());
         let host = PluginHost::new(Arc::clone(&registry)).unwrap();
         let id = MakiId::generate();
@@ -146,6 +250,29 @@ impl Runtime {
                         reply_tx
                             .send(Ok(json!(ui_focus.lock().unwrap().to_string())))
                             .ok();
+                    }
+                    UiAction::Session {
+                        req: SessionRequest::Live,
+                        reply_tx,
+                    } => {
+                        let view = ui_view.lock().unwrap();
+                        if view.live {
+                            let id = ui_focus.lock().unwrap().to_string();
+                            let live = json!([{ "id": id, "title": "", "status": view.status, "updated_at": 0, "focused": true }]);
+                            reply_tx.send(Ok(live)).ok();
+                        }
+                    }
+                    UiAction::Session {
+                        req: SessionRequest::Read { .. },
+                        reply_tx,
+                    } => {
+                        let mut view = ui_view.lock().unwrap();
+                        let mut focus = ui_focus.lock().unwrap();
+                        let snapshot = json!({ "id": focus.to_string(), "cwd": view.cwd, "status": view.status });
+                        reply_tx.send(Ok(snapshot)).ok();
+                        if let Some(next) = view.focus_after_read.take() {
+                            *focus = next;
+                        }
                     }
                     UiAction::Flash(text) => {
                         flash_tx.send(text).ok();
@@ -237,6 +364,8 @@ impl Runtime {
             flashes,
             windows,
             models,
+            view,
+            claude,
         }
     }
 
@@ -252,14 +381,23 @@ impl Runtime {
     }
 
     fn command(&self, args: &str) -> String {
+        self.flash_of("/goal", args)
+    }
+
+    /// Runs {command} and answers the flash it shows.
+    fn flash_of(&self, command: &str, args: &str) -> String {
         while self.flashes.try_recv().is_ok() {}
         self.host.event_handle().run_command(
             Arc::from(PACKAGE),
-            Arc::from("/goal"),
+            Arc::from(command),
             args.into(),
             0,
         );
         self.flashes.recv_timeout(WAIT_LIMIT).unwrap()
+    }
+
+    fn has_tool(&self, name: &str) -> bool {
+        self.registry.get(name).is_some()
     }
 
     fn fire(&self, event: &str, extra: Value) {
@@ -349,3 +487,17 @@ mod goals;
 mod monitors;
 mod providers;
 mod runinfra;
+#[cfg(feature = "unix_sockets")]
+mod speakerbus;
+
+/// A Maki without `maki.net.listen_unix` keeps claude-code-speakerbus off,
+/// even where Claude Code is in use, and shows the model no tools.
+#[cfg(not(feature = "unix_sockets"))]
+#[test]
+fn speakerbus_stays_off_without_unix_sockets() {
+    let runtime = Runtime::with_claude();
+    assert!(!runtime.has_tool("claude_sessions"));
+    assert!(!runtime.has_tool("claude_send"));
+    let answer = runtime.flash_of("/speakerbus", "");
+    assert!(answer.contains("maki.net.listen_unix"), "{answer}");
+}

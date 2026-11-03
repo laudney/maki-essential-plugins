@@ -7,13 +7,13 @@ use maki_providers::model_registry;
 use maki_providers::plugin;
 use maki_providers::provider::{available_model_specs, from_model};
 use maki_providers::test_support::{Canned, Requests, serve};
-use maki_providers::{Model, ModelPricing, Timeouts, catalog_provider, warm_catalog};
+use maki_providers::{Model, ModelPricing, Timeouts};
 use maki_storage::StateDir;
 use maki_storage::auth::{ProviderCredentials, save_provider_credentials};
 use serde_json::{Value, json};
 use test_case::test_case;
 
-use super::{Runtime, isolated_state};
+use super::{Runtime, catalog_now, isolated_state, warm_catalog_now};
 
 mod replay;
 
@@ -72,8 +72,8 @@ fn unselected_package_keeps_goal_and_monitor_without_runinfra() {
 fn selected_package_uses_saved_key_and_live_metadata_over_cached_catalog() {
     let _home = isolated_state();
     stale_catalog();
-    warm_catalog();
-    let catalog = catalog_provider(SLUG).unwrap();
+    warm_catalog_now();
+    let catalog = catalog_now(SLUG).unwrap();
     assert!(catalog.models.contains_key(OBSOLETE_MODEL_ID));
     assert!(catalog.models.contains_key(MODEL_ID));
     save_provider_credentials(

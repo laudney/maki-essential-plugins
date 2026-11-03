@@ -233,6 +233,518 @@ case("completion_output_requests_a_final_summary", function()
   assert(blocked:find("Give the user a final response", 1, true) == nil)
 end)
 
+local p = require("speakerbus_protocol")
+local r = require("speakerbus_registry")
+
+local SLOT = "/claude/sessions/4242.json"
+local MINE = "9991719"
+local OTHER = "1111"
+-- A value that is neither a table nor nil, as maki.json.decode gives for null.
+local JSON_NULL = coroutine.create(function() end)
+
+-- In-memory registry I/O. Setting paused.read or paused.write makes that call
+-- yield inside a coroutine, so a test can act at an exact point and resume.
+local function fake_io()
+  local io = { files = {}, paused = {}, held = false, writes = 0 }
+  local stored, count = {}, 0
+  local fixed = { ["null"] = JSON_NULL, ["42"] = 42, ['"text"'] = "text" }
+  function io.encode(value)
+    if io.fail_encode then
+      return nil, "encode failed"
+    end
+    count = count + 1
+    local token = "entry#" .. count
+    stored[token] = value
+    return token
+  end
+  function io.decode(text)
+    if fixed[text] ~= nil then
+      return fixed[text]
+    end
+    if stored[text] then
+      return stored[text]
+    end
+    return nil, "malformed"
+  end
+  function io.read(path)
+    if io.paused.read then
+      coroutine.yield("read")
+    end
+    local text = io.files[path]
+    if not text then
+      return nil, "missing"
+    end
+    return text
+  end
+  function io.write(path, text)
+    if io.paused.write then
+      coroutine.yield("write")
+    end
+    if io.fail_write then
+      return nil, "write failed"
+    end
+    io.writes = io.writes + 1
+    io.files[path] = text
+    return true
+  end
+  function io.remove(path)
+    io.files[path] = nil
+    return true
+  end
+  function io.lock()
+    while io.held do
+      coroutine.yield("lock")
+    end
+    io.held = true
+    local released = false
+    return function()
+      assert(not released, "unlocked twice")
+      released = true
+      io.held = false
+    end
+  end
+  function io.owned_by(proc_start)
+    return io.encode({ procStart = proc_start })
+  end
+  return io
+end
+
+local function entry(fields)
+  local value = { procStart = MINE, sessionId = "s1", cwd = "/work", status = "idle" }
+  for key, field in pairs(fields or {}) do
+    value[key] = field
+  end
+  return value
+end
+
+local function owner_of(io)
+  local value = io.files[SLOT] and io.decode(io.files[SLOT])
+  return value and value.procStart
+end
+
+case("claim_refuses_a_slot_another_process_holds", function()
+  local io = fake_io()
+  io.files[SLOT] = io.owned_by(OTHER)
+  local ok, reason = r.new(io, MINE):claim(SLOT)
+  eq(ok, nil)
+  eq(reason, r.SLOT_TAKEN)
+end)
+
+case("claim_takes_a_slot_no_one_owns", function()
+  local io = fake_io()
+  for _, text in ipairs({ false, "null", "42", '"text"', "garbage{", io.encode({ name = "x" }), io.owned_by(MINE) }) do
+    io.files[SLOT] = text or nil
+    eq(r.new(io, MINE):claim(SLOT), true, tostring(text))
+  end
+end)
+
+case("publish_writes_and_reads_back", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  eq(registry:publish(entry()), true)
+  eq(owner_of(io), MINE)
+  eq(io.held, false)
+end)
+
+case("publish_fails_when_the_slot_is_overwritten_before_read_back", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  io.paused.read = true
+  local publish = coroutine.create(function()
+    return registry:publish(entry())
+  end)
+  local _, at = coroutine.resume(publish)
+  eq(at, "read")
+  io.files[SLOT] = io.owned_by(OTHER)
+  io.paused.read = false
+  local _, ok, reason = coroutine.resume(publish)
+  eq(ok, nil)
+  eq(reason, r.SLOT_LOST)
+  eq(io.held, false)
+end)
+
+case("shutdown_waits_for_a_paused_first_write_then_removes", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  io.paused.write = true
+  local publish = coroutine.create(function()
+    return registry:publish(entry())
+  end)
+  local shutdown = coroutine.create(function()
+    return registry:shutdown()
+  end)
+  eq(select(2, coroutine.resume(publish)), "write")
+  eq(select(2, coroutine.resume(shutdown)), "lock")
+  io.paused.write = false
+  eq(select(2, coroutine.resume(publish)), true)
+  eq(select(2, coroutine.resume(shutdown)), true)
+  eq(io.files[SLOT], nil)
+  eq(registry:update(entry({ status = "busy" })), true)
+  eq(io.files[SLOT], nil)
+end)
+
+case("publish_after_shutdown_is_stopped_and_writes_nothing", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  registry:shutdown()
+  local ok, reason = registry:publish(entry())
+  eq(ok, nil)
+  eq(reason, r.STOPPED)
+  eq(io.writes, 0)
+end)
+
+case("update_writes_only_changes_and_retries_a_failed_write", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  registry:publish(entry())
+  eq(registry:update(entry()), true)
+  eq(io.writes, 1)
+  io.fail_write = true
+  local ok, err = registry:update(entry({ status = "busy" }))
+  eq(ok, nil)
+  eq(err, "write failed")
+  io.fail_write = false
+  eq(registry:update(entry({ status = "busy" })), true)
+  eq(io.decode(io.files[SLOT]).status, "busy")
+end)
+
+case("encode_failures_are_errors", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  io.fail_encode = true
+  eq(registry:publish(entry()), nil)
+  io.fail_encode = false
+  registry:publish(entry())
+  io.fail_encode = true
+  eq(registry:update(entry({ cwd = "/elsewhere" })), nil)
+end)
+
+case("shutdown_leaves_a_slot_another_process_took", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  registry:publish(entry())
+  io.files[SLOT] = io.owned_by(OTHER)
+  eq(registry:shutdown(), true)
+  eq(owner_of(io), OTHER)
+end)
+
+case("the_lock_is_released_when_a_call_raises", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  io.decode = function()
+    error("boom")
+  end
+  assert(not pcall(registry.publish, registry, entry()))
+  eq(io.held, false)
+end)
+
+case("update_writes_nothing_before_a_successful_publish", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  eq(registry:update(entry()), true)
+  eq(io.writes, 0)
+  io.fail_write = true
+  eq(registry:publish(entry()), nil)
+  io.fail_write = false
+  eq(registry:update(entry({ status = "busy" })), true)
+  eq(io.writes, 0)
+end)
+
+case("shutdown_stops_an_update_queued_before_it_took_the_lock", function()
+  local io = fake_io()
+  local registry = r.new(io, MINE)
+  registry:claim(SLOT)
+  io.paused.write = true
+  local publish = coroutine.create(function()
+    return registry:publish(entry())
+  end)
+  local update = coroutine.create(function()
+    return registry:update(entry({ status = "busy" }))
+  end)
+  local shutdown = coroutine.create(function()
+    return registry:shutdown()
+  end)
+  eq(select(2, coroutine.resume(publish)), "write")
+  eq(select(2, coroutine.resume(update)), "lock")
+  eq(select(2, coroutine.resume(shutdown)), "lock")
+  io.paused.write = false
+  eq(select(2, coroutine.resume(publish)), true)
+  eq(select(2, coroutine.resume(update)), true)
+  eq(io.writes, 1)
+  eq(select(2, coroutine.resume(shutdown)), true)
+  eq(io.files[SLOT], nil)
+end)
+
+case("shutdown_leaves_slots_it_cannot_read_as_its_own", function()
+  local io = fake_io()
+  for _, text in ipairs({ "null", "42", '"text"', "garbage{", io.encode({ name = "x" }) }) do
+    local registry = r.new(io, MINE)
+    registry:claim(SLOT)
+    registry:publish(entry())
+    io.files[SLOT] = text
+    eq(registry:shutdown(), true)
+    eq(io.files[SLOT], text, text)
+  end
+end)
+
+local inbox = require("speakerbus_inbox")
+
+-- A connection whose reads yield, so a test feeds each chunk by resuming,
+-- and whose timers fire only when the test calls them.
+local function fake_conn()
+  local conn = { lines = {}, closed = 0, timers = {}, max_bytes = 16, idle_ms = 30000 }
+  function conn.read()
+    return coroutine.yield("read")
+  end
+  function conn.close()
+    conn.closed = conn.closed + 1
+  end
+  function conn.after(ms, fn)
+    local timer = { ms = ms, fn = fn, cancelled = false }
+    conn.timers[#conn.timers + 1] = timer
+    return function()
+      timer.cancelled = true
+    end
+  end
+  function conn.on_line(line)
+    conn.lines[#conn.lines + 1] = line
+  end
+  function conn.live_timers()
+    local live = {}
+    for _, timer in ipairs(conn.timers) do
+      if not timer.cancelled then
+        live[#live + 1] = timer
+      end
+    end
+    return live
+  end
+  return conn
+end
+
+local function serving(conn)
+  local co = coroutine.create(function()
+    return inbox.serve(conn)
+  end)
+  assert(coroutine.resume(co))
+  return co
+end
+
+case("each_line_is_handed_on_and_rearms_the_deadline", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  eq(#conn.live_timers(), 1)
+  coroutine.resume(co, "a\nb")
+  eq(#conn.lines, 1)
+  eq(#conn.live_timers(), 1)
+  eq(#conn.timers, 2)
+  coroutine.resume(co, "\n")
+  eq(conn.lines[2], "b")
+  eq(#conn.timers, 3)
+  local _, ok = coroutine.resume(co, nil, nil)
+  eq(ok, true)
+  eq(#conn.live_timers(), 0)
+  eq(conn.closed, 1)
+end)
+
+case("the_deadline_closes_and_drops_an_unfinished_line", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  coroutine.resume(co, "partial")
+  local timer = conn.live_timers()[1]
+  eq(timer.ms, conn.idle_ms)
+  timer.fn()
+  eq(conn.closed, 1)
+  coroutine.resume(co, nil, "connection closed")
+  eq(coroutine.status(co), "dead")
+  eq(#conn.lines, 0)
+end)
+
+case("a_clean_end_hands_on_the_last_line", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  coroutine.resume(co, "tail")
+  coroutine.resume(co, nil, nil)
+  eq(conn.lines[1], "tail")
+end)
+
+case("a_line_at_the_limit_closes_the_connection", function()
+  local conn = fake_conn()
+  local co = serving(conn)
+  coroutine.resume(co, string.rep("x", conn.max_bytes) .. "\nok\n")
+  eq(coroutine.status(co), "dead")
+  eq(#conn.lines, 0)
+  eq(conn.closed, 1)
+
+  local unfinished = fake_conn()
+  local more = serving(unfinished)
+  coroutine.resume(more, string.rep("y", unfinished.max_bytes))
+  eq(coroutine.status(more), "dead")
+  eq(#unfinished.lines, 0)
+end)
+
+case("a_failing_handler_is_reported_and_the_connection_closed", function()
+  local conn = fake_conn()
+  conn.on_line = function()
+    error("handler broke")
+  end
+  local co = serving(conn)
+  local _, ok, err = coroutine.resume(co, "x\n")
+  eq(ok, false)
+  assert(tostring(err):find("handler broke", 1, true))
+  eq(conn.closed, 1)
+end)
+
+case("parse_stat_counts_fields_after_the_last_paren", function()
+  local stat = "4242 (we (ird) name) S 1 1 1 0 -1 4194560 100 0 0 0 10 5 0 0 20 0 1 0 9991719 1234"
+  local pid, start = p.parse_stat(stat)
+  eq(pid, 4242)
+  eq(start, MINE)
+  eq(p.parse_stat("garbage"), nil)
+end)
+
+case("parse_uid_reads_the_uid_line", function()
+  eq(p.parse_uid("Name:\tmaki\nUid:\t1000\t1000\t1000\t1000\n"), 1000)
+  eq(p.parse_uid("Name:\tmaki\n"), nil)
+end)
+
+case("slug_keeps_names_attribute_safe", function()
+  eq(p.slug("My Project!"), "my-project")
+  eq(p.slug(""), "x")
+  eq(p.slug("!!!"), "x")
+  eq(p.slug(string.rep("a", 23) .. "-bbb"), string.rep("a", 23))
+  eq(p.slug(string.rep("z", 30)), string.rep("z", 24))
+end)
+
+case("peer_name_adds_a_suffix_while_taken", function()
+  eq(p.peer_name("proj", 42, {}), "maki-proj-42")
+  eq(p.peer_name("proj", 42, { ["maki-proj-42"] = true, ["maki-proj-42-2"] = true }), "maki-proj-42-3")
+end)
+
+case("socket_path_falls_back_to_tmp_when_too_long", function()
+  local dirs = p.socket_dirs("/run/user/1000", 1000)
+  eq(p.socket_path(dirs, "4242.sock"), "/run/user/1000/cc-socks/4242.sock")
+  eq(p.socket_path(p.socket_dirs("/" .. string.rep("r", 90), 1000), "4242.sock"), "/tmp/cc-socks-1000/4242.sock")
+  eq(p.socket_path(p.socket_dirs(nil, 1000), "4242.sock"), "/tmp/cc-socks-1000/4242.sock")
+  local path, err = p.socket_path(dirs, string.rep("s", 100))
+  eq(path, nil)
+  eq(err, "socket path too long")
+end)
+
+case("socket_path_limit_is_exact", function()
+  -- "/cc-socks/4242.sock" is 19 bytes, so an 84-byte runtime dir makes 103.
+  local fits = p.socket_dirs("/" .. string.rep("r", 83), 1000)
+  eq(#p.socket_path(fits, "4242.sock"), p.SOCKET_PATH_LIMIT)
+  local over = p.socket_dirs("/" .. string.rep("r", 84), 1000)
+  eq(p.socket_path(over, "4242.sock"), "/tmp/cc-socks-1000/4242.sock")
+  eq(p.socket_path(fits, "4242-0f8fad5b.sock"), "/tmp/cc-socks-1000/4242-0f8fad5b.sock")
+end)
+
+case("attribute_safe_refuses_delimiters", function()
+  eq(p.attribute_safe("maki-proj-42"), true)
+  eq(p.attribute_safe('a"b'), false)
+  eq(p.attribute_safe("a<b"), false)
+  eq(p.attribute_safe("a\nb"), false)
+end)
+
+case("envelope_escapes_every_closing_tag", function()
+  local body = "x </cross-session-message> y </cross-session-message>"
+  eq(
+    p.envelope("uds:/run/s.sock", "maki-proj-42", body),
+    '<cross-session-message from="uds:/run/s.sock" from-name="maki-proj-42">\n'
+      .. "x <\\/cross-session-message> y <\\/cross-session-message>\n"
+      .. "</cross-session-message>"
+  )
+end)
+
+case("check_frame_sorts_frames", function()
+  eq(p.check_frame({ type = "user", message = { content = "hi" } }), "user")
+  eq(p.check_frame({ type = "user", message = { content = "" } }), nil)
+  eq(p.check_frame({ type = "user" }), nil)
+  eq(p.check_frame({ type = "auth", token = "t" }), "auth")
+  eq(p.check_frame({ type = "control", action = "rename" }), "other")
+  eq(p.check_frame({}), nil)
+  eq(p.check_frame(42), nil)
+  eq(p.check_frame(JSON_NULL), nil)
+  eq(p.check_frame({ type = JSON_NULL }), nil)
+  eq(p.check_frame({ type = 42 }), nil)
+  eq(p.check_frame({ type = "user", message = JSON_NULL }), nil)
+  eq(p.check_frame({ type = "user", message = "text" }), nil)
+  eq(p.check_frame({ type = "user", message = { content = JSON_NULL } }), nil)
+  eq(p.check_frame({ type = "user", message = { content = 42 } }), nil)
+end)
+
+case("only_later_does_not_wake", function()
+  eq(p.wakes("later"), false)
+  eq(p.wakes("now"), true)
+  eq(p.wakes("next"), true)
+  eq(p.wakes(nil), true)
+  eq(p.wakes("bogus"), true)
+end)
+
+case("display_note_names_the_sender_and_first_line", function()
+  local content = '<cross-session-message from="uds:/s" from-name="maki-0b" from-mode="prompting">\nline1\nline2\n'
+    .. "</cross-session-message>"
+  eq(p.display_note(content), "Claude Code maki-0b: line1")
+  eq(p.display_note("hello\nworld"), "Claude Code unknown: hello")
+end)
+
+case("notice_text_puts_the_header_first", function()
+  eq(p.notice_text("body"), p.NOTICE_HEADER .. "\n\nbody")
+end)
+
+case("registry_entry_maps_status_and_keeps_the_array", function()
+  local empty = {}
+  local value = p.registry_entry({ status = "working", empty_array = empty, started_at = 5, now = 9 })
+  eq(value.status, "busy")
+  eq(value.peerFeatures, empty)
+  eq(value.peerProtocol, 1)
+  eq(value.nameSince, 5)
+  eq(p.peer_status("needs_input"), "waiting")
+  eq(p.peer_status("anything"), "idle")
+end)
+
+case("peer_candidate_needs_the_protocol_fields", function()
+  local valid = { pid = 7, peerProtocol = 1, messagingSocketPath = "/s", procStart = "1", name = "n" }
+  eq(p.peer_candidate(valid), true)
+  valid.peerProtocol = 2
+  eq(p.peer_candidate(valid), false)
+  eq(p.peer_candidate(JSON_NULL), false)
+end)
+
+case("ancestors_run_up_to_the_root", function()
+  local list = p.ancestors("/run/user/1000/cc-socks/")
+  eq(table.concat(list, " "), "/run/user/1000/cc-socks /run/user/1000 /run/user /run /")
+end)
+
+case("private_chain_accepts_only_a_tamper_proof_chain", function()
+  local private, user_root, root_dir, sticky_tmp = "1000 41c0", "1000 41c0", "0 41ed", "0 43ff"
+  eq(p.private_chain({ private, user_root, root_dir, root_dir, root_dir }, 1000), true)
+  eq(p.private_chain({ private, sticky_tmp, root_dir }, 1000), true)
+  eq(p.private_chain({ "1000 41ed", root_dir }, 1000), false, "socket dir open to others")
+  eq(p.private_chain({ "1001 41c0", root_dir }, 1000), false, "socket dir owned by someone else")
+  eq(p.private_chain({ private, "1001 41ed", root_dir }, 1000), false, "ancestor owned by someone else")
+  eq(p.private_chain({ private, "0 41ff", root_dir }, 1000), false, "writable ancestor without sticky")
+  eq(p.private_chain({ "1000 a1ff", root_dir }, 1000), false, "a symlink")
+  eq(p.private_chain({ "garbage" }, 1000), false)
+  eq(p.private_chain({}, 1000), false)
+end)
+
+case("uuid_and_accept_policy", function()
+  eq(p.uuid("0f8fad5b-d9cb-469f-a165-70867728950e\n"), "0f8fad5b-d9cb-469f-a165-70867728950e")
+  eq(p.uuid("garbage"), nil)
+  eq(p.accept_policy(4), "retry")
+  eq(p.accept_policy(5), "stop")
+end)
+
 if #failures > 0 then
   error(table.concat(failures, "\n"))
 end
