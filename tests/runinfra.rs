@@ -72,8 +72,8 @@ fn unselected_package_keeps_goal_and_monitor_without_runinfra() {
 fn selected_package_uses_saved_key_and_live_metadata_over_cached_catalog() {
     let _home = isolated_state();
     stale_catalog();
-    warm_catalog();
-    let catalog = catalog_provider(SLUG).unwrap();
+    runtime().block_on(warm_catalog());
+    let catalog = runtime().block_on(catalog_provider(SLUG)).unwrap();
     assert!(catalog.models.contains_key(OBSOLETE_MODEL_ID));
     assert!(catalog.models.contains_key(MODEL_ID));
     save_provider_credentials(

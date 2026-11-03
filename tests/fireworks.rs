@@ -55,9 +55,10 @@ fn saved_key_and_live_paginated_models_replace_stale_catalog() {
         .to_string(),
     )
     .unwrap();
-    warm_catalog();
+    runtime().block_on(warm_catalog());
     assert!(
-        catalog_provider(SLUG)
+        runtime()
+            .block_on(catalog_provider(SLUG))
             .unwrap()
             .models
             .contains_key(OBSOLETE)
