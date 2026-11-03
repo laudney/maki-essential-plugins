@@ -280,7 +280,8 @@ Use `/packupdate maki-essential-plugins` to review updates.
 
 ## Development
 
-Run the Lua state tests and formatting check from the repository root:
+Run the Lua state tests and formatting check from the repository root. The
+state tests need Lua 5.2 or later, since they yield across `pcall`:
 
 ```sh
 LUA_PATH='./lua/?.lua;;' lua tests/spec.lua
@@ -298,7 +299,9 @@ chat requests, and discovery errors. They use temporary XDG
 directories and recorded local HTTP responses; they do not call a remote model
 or use your saved Maki configuration.
 Install Python 3.11+, Rust 1.99.0, and `cargo-nextest`, then point the runner at
-an upstream Maki source checkout:
+a Maki source checkout. The runner reads which APIs that checkout has, so the
+Claude Code plugin's runtime tests run only against a Maki whose `maki.net`
+has `listen_unix`, and otherwise check that the plugin stays off:
 
 ```sh
 python3 tests/runtime.py /path/to/maki --lint

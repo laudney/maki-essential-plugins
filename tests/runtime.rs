@@ -65,9 +65,11 @@ struct Runtime {
     flashes: flume::Receiver<String>,
     windows: flume::Receiver<Window>,
     models: Arc<Mutex<Models>>,
+    #[cfg_attr(not(feature = "unix_sockets"), allow(dead_code))]
     view: Arc<Mutex<SessionView>>,
     /// Holds `CLAUDE_CONFIG_DIR` and, for [`Runtime::with_claude`], the
     /// runtime directory, so no test reaches the user's Claude Code state.
+    #[cfg_attr(not(feature = "unix_sockets"), allow(dead_code))]
     claude: TempDir,
 }
 
@@ -154,6 +156,22 @@ fn prepare_claude(in_use: bool) -> TempDir {
     claude
 }
 
+/// The models.dev catalog warmed, whichever Maki: newer builds load it
+/// without blocking.
+fn warm_catalog_now() {
+    #[cfg(feature = "async_catalog")]
+    runtime().block_on(maki_providers::warm_catalog());
+    #[cfg(not(feature = "async_catalog"))]
+    maki_providers::warm_catalog();
+}
+
+fn catalog_now(slug: &str) -> Option<maki_providers::ProviderData> {
+    #[cfg(feature = "async_catalog")]
+    return runtime().block_on(maki_providers::catalog_provider(slug));
+    #[cfg(not(feature = "async_catalog"))]
+    maki_providers::catalog_provider(slug)
+}
+
 fn wait_until(mut ready: impl FnMut() -> bool) {
     let until = Instant::now() + WAIT_LIMIT;
     while !ready() {
@@ -195,6 +213,7 @@ impl Runtime {
     }
 
     /// [`Self::with_claude`] with the UI answering from {view}.
+    #[cfg_attr(not(feature = "unix_sockets"), allow(dead_code))]
     fn with_claude_view(view: SessionView) -> Self {
         Self::build(|_| {}, &[], true, view, |_| {})
     }
@@ -459,4 +478,21 @@ mod goals;
 mod monitors;
 mod providers;
 mod runinfra;
+#[cfg(feature = "unix_sockets")]
 mod speakerbus;
+
+/// A Maki without `maki.net.listen_unix` keeps claude-code-speakerbus off,
+/// even where Claude Code is in use.
+#[cfg(not(feature = "unix_sockets"))]
+#[test]
+fn speakerbus_stays_off_without_unix_sockets() {
+    let runtime = Runtime::with_claude();
+    let mut answer = String::new();
+    wait_until(|| {
+        answer = runtime
+            .call("claude_sessions", serde_json::json!({}))
+            .unwrap_err();
+        !answer.contains("starting")
+    });
+    assert!(answer.contains("maki.net.listen_unix"), "{answer}");
+}

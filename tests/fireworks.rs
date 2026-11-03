@@ -6,13 +6,13 @@ use maki_providers::model_registry;
 use maki_providers::plugin;
 use maki_providers::provider::{available_model_specs, from_model};
 use maki_providers::test_support::{Canned, serve};
-use maki_providers::{Message, Model, RequestOptions, Timeouts, catalog_provider, warm_catalog};
+use maki_providers::{Message, Model, RequestOptions, Timeouts};
 use maki_storage::StateDir;
 use maki_storage::auth::{ProviderCredentials, save_provider_credentials};
 use serde_json::{Value, json};
 use test_case::test_case;
 
-use super::{Runtime, isolated_state};
+use super::{Runtime, catalog_now, isolated_state, warm_catalog_now};
 
 const SLUG: &str = "fireworks-ai";
 const KEY_ENV: &str = "FIREWORKS_API_KEY";
@@ -55,14 +55,8 @@ fn saved_key_and_live_paginated_models_replace_stale_catalog() {
         .to_string(),
     )
     .unwrap();
-    runtime().block_on(warm_catalog());
-    assert!(
-        runtime()
-            .block_on(catalog_provider(SLUG))
-            .unwrap()
-            .models
-            .contains_key(OBSOLETE)
-    );
+    warm_catalog_now();
+    assert!(catalog_now(SLUG).unwrap().models.contains_key(OBSOLETE));
     save_provider_credentials(
         &StateDir::resolve().unwrap(),
         SLUG,

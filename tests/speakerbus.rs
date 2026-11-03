@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{PermissionsExt, symlink};
 use std::net::Shutdown;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -152,7 +152,10 @@ fn woken(mailbox: &SessionMailbox) -> Vec<Notice> {
 /// Every notice pending, once [`Runtime::send_lines`] returned, and none of
 /// them asked to wake the session.
 fn arrived_quietly(mailbox: &SessionMailbox) -> Vec<Notice> {
-    assert!(mailbox.claim_wake().is_empty(), "a quiet notice asked to wake");
+    assert!(
+        mailbox.claim_wake().is_empty(),
+        "a quiet notice asked to wake"
+    );
     Notice::all(mailbox.drain())
 }
 
@@ -170,7 +173,12 @@ fn wait_for_close(stream: &mut UnixStream) {
 }
 
 fn only(notices: Vec<Notice>) -> Notice {
-    assert_eq!(notices.len(), 1, "{:?}", notices.iter().map(|n| &n.text).collect::<Vec<_>>());
+    assert_eq!(
+        notices.len(),
+        1,
+        "{:?}",
+        notices.iter().map(|n| &n.text).collect::<Vec<_>>()
+    );
     notices.into_iter().next().unwrap()
 }
 
@@ -230,7 +238,11 @@ impl Peer {
             "name": name,
             "status": "idle",
         });
-        fs::write(sessions_in(root).join(format!("{pid}.json")), body.to_string()).unwrap();
+        fs::write(
+            sessions_in(root).join(format!("{pid}.json")),
+            body.to_string(),
+        )
+        .unwrap();
         Self {
             child,
             listener,
@@ -269,12 +281,12 @@ fn the_entry_is_published_and_the_socket_listens() {
     assert_eq!(entry["peerProtocol"], json!(1));
     assert_eq!(entry["peerFeatures"], json!([]));
     assert_eq!(entry["entrypoint"], json!("maki"));
-    assert_eq!(
-        entry["name"],
-        json!(format!("{SLUG_NAME_PREFIX}{}", pid()))
-    );
+    assert_eq!(entry["name"], json!(format!("{SLUG_NAME_PREFIX}{}", pid())));
     let socket = runtime.socket();
-    assert_eq!(socket, sockets_in(runtime.claude.path()).join(format!("{}.sock", pid())));
+    assert_eq!(
+        socket,
+        sockets_in(runtime.claude.path()).join(format!("{}.sock", pid()))
+    );
     assert!(UnixStream::connect(&socket).is_ok());
 }
 
@@ -282,7 +294,12 @@ fn the_entry_is_published_and_the_socket_listens() {
 fn without_claude_code_the_plugin_stays_off() {
     let runtime = Runtime::new();
     assert!(runtime.stays_off().contains(OFF));
-    assert!(runtime.call("claude_send", json!({"to": PEER_NAME, "message": "hi"})).unwrap_err().contains(OFF));
+    assert!(
+        runtime
+            .call("claude_send", json!({"to": PEER_NAME, "message": "hi"}))
+            .unwrap_err()
+            .contains(OFF)
+    );
 }
 
 #[test]
@@ -292,7 +309,11 @@ fn a_next_frame_becomes_a_waking_notice() {
     runtime.send_lines(&[user_frame("hello maki", Some("next"), None)]);
     let notice = only(runtime.woken());
     assert!(notice.text.starts_with(HEADER), "{}", notice.text);
-    assert!(notice.text.ends_with(&envelope("hello maki")), "{}", notice.text);
+    assert!(
+        notice.text.ends_with(&envelope("hello maki")),
+        "{}",
+        notice.text
+    );
     assert_eq!(notice.display.as_deref(), Some(DISPLAY_LINE));
 }
 
@@ -382,7 +403,9 @@ fn claude_send_replies_to_a_uds_address() {
     runtime.active();
     let peer = Peer::at(runtime.claude.path(), PEER_NAME);
     let to = format!("uds:{}", peer.socket.display());
-    let answer = runtime.call("claude_send", json!({"to": to, "message": "reply"})).unwrap();
+    let answer = runtime
+        .call("claude_send", json!({"to": to, "message": "reply"}))
+        .unwrap();
     assert!(answer.contains(DELIVERED), "{answer}");
     assert_eq!(peer.received().len(), 1);
 }
@@ -393,7 +416,10 @@ fn claude_send_to_a_missing_socket_is_not_sent() {
     runtime.active();
     let missing = sockets_in(runtime.claude.path()).join("missing.sock");
     let err = runtime
-        .call("claude_send", json!({"to": format!("uds:{}", missing.display()), "message": "x"}))
+        .call(
+            "claude_send",
+            json!({"to": format!("uds:{}", missing.display()), "message": "x"}),
+        )
         .unwrap_err();
     assert!(err.contains(NOT_SENT), "{err}");
 }
@@ -423,7 +449,10 @@ fn claude_send_to_a_receiver_that_never_reads_is_outcome_unknown() {
 fn claude_sessions_lists_only_live_peers() {
     let runtime = Runtime::with_claude();
     runtime.active();
-    assert_eq!(runtime.call("claude_sessions", json!({})).unwrap(), NO_PEERS);
+    assert_eq!(
+        runtime.call("claude_sessions", json!({})).unwrap(),
+        NO_PEERS
+    );
     let peer = Peer::at(runtime.claude.path(), PEER_NAME);
     let sessions = sessions_in(runtime.claude.path());
     let stale = |pid: u32, start: &str, socket: &Path| {
@@ -437,7 +466,11 @@ fn claude_sessions_lists_only_live_peers() {
     let sleeper = Command::new("sleep").arg("60").spawn().unwrap();
     stale(sleeper.id(), FOREIGN_START, &peer.socket);
     let mut no_socket = Command::new("sleep").arg("60").spawn().unwrap();
-    stale(no_socket.id(), &start_of(no_socket.id()), &sockets_in(runtime.claude.path()).join("gone.sock"));
+    stale(
+        no_socket.id(),
+        &start_of(no_socket.id()),
+        &sockets_in(runtime.claude.path()).join("gone.sock"),
+    );
 
     let listed = runtime.call("claude_sessions", json!({})).unwrap();
     assert_eq!(listed.lines().count(), 1, "{listed}");
@@ -463,12 +496,18 @@ fn anything_at_the_pid_socket_name_is_left_and_a_suffix_used() {
     assert_ne!(socket, taken);
     let name = socket.file_name().unwrap().to_str().unwrap().to_owned();
     assert!(name.starts_with(&format!("{}-", pid())), "{name}");
-    assert!(fs::symlink_metadata(&taken).unwrap().file_type().is_symlink());
+    assert!(
+        fs::symlink_metadata(&taken)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }
 
 #[test]
 fn a_slot_owned_by_another_process_keeps_the_plugin_off() {
-    let foreign = json!({"pid": pid(), "procStart": FOREIGN_START, "sessionId": OTHER_SESSION}).to_string();
+    let foreign =
+        json!({"pid": pid(), "procStart": FOREIGN_START, "sessionId": OTHER_SESSION}).to_string();
     let written = foreign.clone();
     let runtime = Runtime::with_claude_and(move |root| {
         fs::write(sessions_in(root).join(format!("{}.json", pid())), written).unwrap();
@@ -495,7 +534,11 @@ fn a_failed_first_write_turns_the_plugin_off_and_closes_the_socket() {
     assert!(off.to_lowercase().contains(DENIED), "{off}");
     let socket = sockets_in(runtime.claude.path()).join(format!("{}.sock", pid()));
     assert!(!socket.exists());
-    fs::set_permissions(sessions_in(runtime.claude.path()), fs::Permissions::from_mode(PRIVATE_DIR)).unwrap();
+    fs::set_permissions(
+        sessions_in(runtime.claude.path()),
+        fs::Permissions::from_mode(PRIVATE_DIR),
+    )
+    .unwrap();
 }
 
 #[test_case("shutdown" ; "shutdown")]
@@ -575,7 +618,10 @@ fn a_ninth_connection_is_closed_until_one_ends() {
     let frame = format!("{}\n", user_frame("from the ninth", None, None));
     ninth.write_all(frame.as_bytes()).ok();
     let mut rest = Vec::new();
-    assert!(ninth.read_to_end(&mut rest).is_ok(), "the ninth connection was not closed");
+    assert!(
+        ninth.read_to_end(&mut rest).is_ok(),
+        "the ninth connection was not closed"
+    );
     drop(idle);
     let mut delivered = Vec::new();
     wait_until(|| {
@@ -587,7 +633,11 @@ fn a_ninth_connection_is_closed_until_one_ends() {
         delivered.extend(Notice::all(runtime.mailbox.claim_wake()));
         !delivered.is_empty()
     });
-    assert!(delivered.iter().all(|notice| notice.text.contains("marker")));
+    assert!(
+        delivered
+            .iter()
+            .all(|notice| notice.text.contains("marker"))
+    );
 }
 
 #[test]
