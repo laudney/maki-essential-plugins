@@ -381,14 +381,23 @@ impl Runtime {
     }
 
     fn command(&self, args: &str) -> String {
+        self.flash_of("/goal", args)
+    }
+
+    /// Runs {command} and answers the flash it shows.
+    fn flash_of(&self, command: &str, args: &str) -> String {
         while self.flashes.try_recv().is_ok() {}
         self.host.event_handle().run_command(
             Arc::from(PACKAGE),
-            Arc::from("/goal"),
+            Arc::from(command),
             args.into(),
             0,
         );
         self.flashes.recv_timeout(WAIT_LIMIT).unwrap()
+    }
+
+    fn has_tool(&self, name: &str) -> bool {
+        self.registry.get(name).is_some()
     }
 
     fn fire(&self, event: &str, extra: Value) {
@@ -482,17 +491,13 @@ mod runinfra;
 mod speakerbus;
 
 /// A Maki without `maki.net.listen_unix` keeps claude-code-speakerbus off,
-/// even where Claude Code is in use.
+/// even where Claude Code is in use, and shows the model no tools.
 #[cfg(not(feature = "unix_sockets"))]
 #[test]
 fn speakerbus_stays_off_without_unix_sockets() {
     let runtime = Runtime::with_claude();
-    let mut answer = String::new();
-    wait_until(|| {
-        answer = runtime
-            .call("claude_sessions", serde_json::json!({}))
-            .unwrap_err();
-        !answer.contains("starting")
-    });
+    assert!(!runtime.has_tool("claude_sessions"));
+    assert!(!runtime.has_tool("claude_send"));
+    let answer = runtime.flash_of("/speakerbus", "");
     assert!(answer.contains("maki.net.listen_unix"), "{answer}");
 }

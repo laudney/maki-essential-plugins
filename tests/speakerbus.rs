@@ -8,6 +8,7 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 use maki_agent::SessionMailbox;
+use maki_lua::Permission;
 use maki_providers::Message;
 use maki_storage::id::MakiId;
 use serde_json::{Value, json};
@@ -291,15 +292,25 @@ fn the_entry_is_published_and_the_socket_listens() {
 }
 
 #[test]
-fn without_claude_code_the_plugin_stays_off() {
+fn without_claude_code_the_plugin_stays_off_and_adds_no_tools() {
     let runtime = Runtime::new();
-    assert!(runtime.stays_off().contains(OFF));
-    assert!(
-        runtime
-            .call("claude_send", json!({"to": PEER_NAME, "message": "hi"}))
-            .unwrap_err()
-            .contains(OFF)
+    assert!(!runtime.has_tool("claude_sessions"));
+    assert!(!runtime.has_tool("claude_send"));
+    assert!(runtime.flash_of("/speakerbus", "").contains(OFF));
+}
+
+#[test_case(Permission::FsRead ; "fs_read")]
+#[test_case(Permission::Env ; "env")]
+fn a_denied_grant_keeps_the_plugin_off_but_loaded(denied: Permission) {
+    let runtime = Runtime::build(
+        |permissions| permissions.set(denied, false),
+        &[],
+        true,
+        SessionView::default(),
+        |_| {},
     );
+    assert!(!runtime.has_tool("claude_sessions"));
+    assert!(runtime.flash_of("/speakerbus", "").contains(OFF));
 }
 
 #[test]

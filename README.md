@@ -167,7 +167,9 @@ to use `claude_sessions` to list Claude Code sessions and `claude_send` to
 message one, or to reply to a message it received.
 
 The plugin does nothing unless `~/.claude/sessions` exists, or the `sessions`
-directory under `CLAUDE_CONFIG_DIR` when that is set. It publishes a registry
+directory under `CLAUDE_CONFIG_DIR` when that is set. Without it, or on a Maki
+without `listen_unix`, the model gets no `claude_` tools, so they cost no
+tokens; run `/reload` after you install Claude Code. It publishes a registry
 entry next to Claude Code's own and removes it when Maki exits or reloads.
 
 ## Provider names

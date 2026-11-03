@@ -319,23 +319,30 @@ local function stay_off(reason)
   maki.log.info("claude-code-speakerbus is off: " .. reason)
 end
 
-local function activate()
+-- The model sees every tool in each request and a session's tools are fixed,
+-- so the tools load only where they can work: a Claude Code installed later
+-- needs /reload. It raises when a grant it needs is denied.
+local function sessions_dir()
   if not maki.net.listen_unix then
-    return stay_off("this maki has no maki.net.listen_unix")
-  end
-  local pid, start = protocol.parse_stat(maki.fs.read(STAT_PATH) or "")
-  if not pid then
-    return stay_off("no /proc/self/stat")
+    return nil, "this maki has no maki.net.listen_unix"
   end
   local home = maki.uv.os_homedir()
   local config = maki.uv.os_getenv(CONFIG_ENV) or (home and (home .. "/" .. DEFAULT_CONFIG))
   if not config then
-    return stay_off("neither $" .. CONFIG_ENV .. " nor a home directory is set")
+    return nil, "neither $" .. CONFIG_ENV .. " nor a home directory is set"
   end
   local sessions = config .. "/" .. SESSIONS_DIR
   local meta = maki.fs.metadata(sessions)
   if not (meta and meta.is_dir) then
-    return stay_off(sessions .. " does not exist")
+    return nil, sessions .. " does not exist"
+  end
+  return sessions
+end
+
+local function activate(sessions)
+  local pid, start = protocol.parse_stat(maki.fs.read(STAT_PATH) or "")
+  if not pid then
+    return stay_off("no /proc/self/stat")
   end
   if not maki.session.live() then
     return stay_off("no interactive UI is attached")
@@ -453,58 +460,60 @@ local function age(started_at)
   return maki.ui.humantime(math.max(0, os.time() - math.floor(started_at / 1000))) .. " ago"
 end
 
-maki.api.register_tool({
-  name = "claude_sessions",
-  description = "List the Claude Code sessions running on this machine that claude_send can reach, "
-    .. "with each one's name, status, working directory, and age.",
-  schema = { type = "object", properties = {}, additionalProperties = false },
-  handler = function()
-    if state.off then
-      return fail(off_reason())
-    end
-    local rows = {}
-    for _, peer in ipairs(peers()) do
-      rows[#rows + 1] = table.concat({
-        peer.name,
-        tostring(peer.status or "unknown"),
-        tostring(peer.cwd or "unknown"),
-        "started " .. age(peer.startedAt),
-      }, " · ")
-    end
-    if #rows == 0 then
-      return "No Claude Code sessions are running."
-    end
-    return table.concat(rows, "\n")
-  end,
-})
+local function register_tools()
+  maki.api.register_tool({
+    name = "claude_sessions",
+    description = "List the Claude Code sessions running on this machine that claude_send can reach, "
+      .. "with each one's name, status, working directory, and age.",
+    schema = { type = "object", properties = {}, additionalProperties = false },
+    handler = function()
+      if state.off then
+        return fail(off_reason())
+      end
+      local rows = {}
+      for _, peer in ipairs(peers()) do
+        rows[#rows + 1] = table.concat({
+          peer.name,
+          tostring(peer.status or "unknown"),
+          tostring(peer.cwd or "unknown"),
+          "started " .. age(peer.startedAt),
+        }, " · ")
+      end
+      if #rows == 0 then
+        return "No Claude Code sessions are running."
+      end
+      return table.concat(rows, "\n")
+    end,
+  })
 
-maki.api.register_tool({
-  name = "claude_send",
-  description = "Send a message to a Claude Code session on this machine. to is a name from "
-    .. "claude_sessions, or the from attribute of a <cross-session-message> you received, "
-    .. "which is how you reply. The message reaches that session's inbox; its model reads it "
-    .. "at its next turn.",
-  schema = {
-    type = "object",
-    properties = {
-      to = { type = "string", description = "A session name, a session id, or a uds: address." },
-      message = { type = "string", description = "The text to send." },
-      priority = {
-        type = "string",
-        enum = { "now", "next", "later" },
-        description = "When the receiver handles it. Default next.",
+  maki.api.register_tool({
+    name = "claude_send",
+    description = "Send a message to a Claude Code session on this machine. to is a name from "
+      .. "claude_sessions, or the from attribute of a <cross-session-message> you received, "
+      .. "which is how you reply. The message reaches that session's inbox; its model reads it "
+      .. "at its next turn.",
+    schema = {
+      type = "object",
+      properties = {
+        to = { type = "string", description = "A session name, a session id, or a uds: address." },
+        message = { type = "string", description = "The text to send." },
+        priority = {
+          type = "string",
+          enum = { "now", "next", "later" },
+          description = "When the receiver handles it. Default next.",
+        },
       },
+      required = { "to", "message" },
+      additionalProperties = false,
     },
-    required = { "to", "message" },
-    additionalProperties = false,
-  },
-  handler = function(input)
-    if state.off then
-      return fail(off_reason())
-    end
-    return send(input)
-  end,
-})
+    handler = function(input)
+      if state.off then
+        return fail(off_reason())
+      end
+      return send(input)
+    end,
+  })
+end
 
 maki.api.register_command({
   name = "/speakerbus",
@@ -518,18 +527,27 @@ maki.api.register_command({
   end,
 })
 
-maki.api.create_autocmd({ "SessionFocusChanged", "SessionStatusChanged", "SessionCwdChanged" }, {
-  callback = function()
-    maki.async.spawn(refresh)
-  end,
-})
-
-maki.api.create_autocmd("SessionEnd", {
-  callback = function(event)
-    if CLEANUP_REASONS[event.data.reason] then
-      shutdown()
-    end
-  end,
-})
-
-maki.async.spawn(activate)
+local checked, sessions, missing = pcall(sessions_dir)
+if not checked then
+  missing, sessions = tostring(sessions), nil
+end
+if not sessions then
+  stay_off(missing)
+else
+  register_tools()
+  maki.api.create_autocmd({ "SessionFocusChanged", "SessionStatusChanged", "SessionCwdChanged" }, {
+    callback = function()
+      maki.async.spawn(refresh)
+    end,
+  })
+  maki.api.create_autocmd("SessionEnd", {
+    callback = function(event)
+      if CLEANUP_REASONS[event.data.reason] then
+        shutdown()
+      end
+    end,
+  })
+  maki.async.spawn(function()
+    activate(sessions)
+  end)
+end
