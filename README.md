@@ -2,8 +2,9 @@
 
 Lua plugins for [Maki](https://github.com/tontinton/maki): keep an agent
 working toward a goal, get notified when a background command makes progress
-or finishes, switch between providers, and optionally use the official RunInfra
-and Fireworks AI model APIs for discovery.
+or finishes, switch between providers, exchange messages with Claude Code
+sessions on the same machine, and optionally use the official RunInfra and
+Fireworks AI model APIs for discovery.
 
 **Requires [Maki 0.7.0](https://github.com/tontinton/maki/releases/tag/v0.7.0)
 or later.** This is the first release with the session permissions and
@@ -33,8 +34,11 @@ see Maki's [installation guide](https://github.com/tontinton/maki#installation).
    only their session id and never reads the conversation. RunInfra needs
    environment access for its key and network access to `api.runinfra.ai`.
    Fireworks AI needs network access to `api.fireworks.ai` and environment
-   access for its key. The prompt also grants the package the `runinfra` and
-   `fireworks-ai` provider names, as shown in
+   access for its key. The Claude Code plugin uses `run` for its inbox socket
+   and the `mkdir` and `stat` that keep the socket directory private, reads
+   and writes its entry in Claude Code's session registry, and can start a
+   turn when a message arrives. The prompt also grants the package the
+   `runinfra` and `fireworks-ai` provider names, as shown in
    [Provider names](#provider-names).
 4. Type `/goal` to check that the package loaded. You should see
    `No goal is set for this session.`
@@ -142,6 +146,30 @@ Maki exits. Reports appear as compact transcript notices when Maki accepts
 them into a turn. The model receives the full report through the session
 mailbox.
 
+## Talk to Claude Code
+
+Claude Code sessions on one machine message each other with their
+`ListAgents` and `SendMessage` tools. This package makes each Maki process one
+of those peers, on Linux with a Maki build whose `maki.net` has `listen_unix`.
+
+Type `/speakerbus` to see the name Claude Code sessions use for this Maki,
+such as `maki-project-4242`. In a Claude Code session, ask:
+
+```text
+List the agents, then tell maki-project-4242 to run the tests and reply
+with the result.
+```
+
+The message reaches the Maki session that is active when it arrives and starts
+a turn if that session is idle. Maki tells its model that the message came from
+a Claude Code session and not from you. To go the other way, ask the Maki agent
+to use `claude_sessions` to list Claude Code sessions and `claude_send` to
+message one, or to reply to a message it received.
+
+The plugin does nothing unless `~/.claude/sessions` exists, or the `sessions`
+directory under `CLAUDE_CONFIG_DIR` when that is set. It publishes a registry
+entry next to Claude Code's own and removes it when Maki exits or reloads.
+
 ## Provider names
 
 `plugin.toml` lists the provider names this package implements:
@@ -247,6 +275,8 @@ Use `/packupdate maki-essential-plugins` to review updates.
 | `monitor` | Start a background command with optional label, match, and wake |
 | `monitor_list` | List this session's monitors and their IDs |
 | `monitor_stop` | Stop one of this session's monitors by ID |
+| `claude_sessions` | List the Claude Code sessions on this machine |
+| `claude_send` | Send a message to a Claude Code session, or reply to one |
 
 ## Development
 
