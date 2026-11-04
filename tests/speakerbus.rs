@@ -360,7 +360,7 @@ fn a_later_frame_does_not_wake() {
 }
 
 #[test]
-fn only_user_frames_for_the_active_session_are_delivered() {
+fn only_user_frames_are_delivered_whatever_session_they_name() {
     let runtime = Runtime::with_claude();
     runtime.active();
     runtime.send_lines(&[
@@ -370,21 +370,26 @@ fn only_user_frames_for_the_active_session_are_delivered() {
         user_frame_with("for a numeric session id", json!(42)),
         user_frame("marker", None, None),
     ]);
-    assert!(only(runtime.woken()).text.contains("marker"));
+    let texts: Vec<String> = runtime.woken().into_iter().map(|n| n.text).collect();
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    for (text, body) in
+        texts
+            .iter()
+            .zip(["for another session", "for a numeric session id", "marker"])
+    {
+        assert!(text.contains(body), "{text}");
+    }
 }
 
 #[test]
-fn a_frame_for_the_session_that_lost_focus_is_dropped() {
+fn a_frame_for_the_session_that_lost_focus_reaches_the_active_one() {
     let runtime = Runtime::with_claude();
     let old = runtime.active()["sessionId"].as_str().unwrap().to_owned();
     let new = MakiId::generate();
     let new_mailbox = SessionMailbox::register(new);
     runtime.focus(new);
-    runtime.send_lines(&[
-        user_frame("for the old focus", None, Some(&old)),
-        user_frame("marker", None, None),
-    ]);
-    assert!(only(woken(&new_mailbox)).text.contains("marker"));
+    runtime.send_lines(&[user_frame("for the old focus", None, Some(&old))]);
+    assert!(only(woken(&new_mailbox)).text.contains("for the old focus"));
     assert!(runtime.mailbox.drain().is_empty());
 }
 
