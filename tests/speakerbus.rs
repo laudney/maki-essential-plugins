@@ -8,6 +8,7 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 use maki_agent::SessionMailbox;
+use maki_agent::prompt::{PromptId, Slot};
 use maki_agent::tools::ToolAudience;
 use maki_lua::Permission;
 use maki_providers::Message;
@@ -50,6 +51,7 @@ const OPEN_DIR: u32 = 0o777;
 const NOT_PRIVATE: &str = "is not a private directory";
 /// The test envelope's `from` is no live peer's socket, so the sender is unknown.
 const DISPLAY_LINE: &str = "Peer claude-peer: hello maki";
+const HINT_HEADING: &str = "## Session bus";
 const NO_PEERS: &str = "No other sessions are running.";
 const CLAUDE_ENTRYPOINT: &str = "cli";
 const MAKI_ENTRYPOINT: &str = "maki";
@@ -117,6 +119,17 @@ impl Runtime {
         }
         stream.shutdown(Shutdown::Write).unwrap();
         wait_for_close(&mut stream);
+    }
+
+    /// The main agent's `tool_usage` prompt hints, as the next run sees them.
+    fn tool_usage_hints(&self) -> String {
+        let slots = self.host.event_handle().collect_prompt_slots();
+        slots
+            .get(PromptId::System, Slot::ToolUsage)
+            .iter()
+            .map(|entry| entry.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn woken(&self) -> Vec<Notice> {
@@ -632,6 +645,8 @@ fn without_an_interactive_ui_the_plugin_stays_off() {
     });
     assert!(runtime.stays_off().contains(NO_UI));
     assert!(runtime.entry().is_none());
+    // The hint is registered here, so this shows its callback honours off.
+    assert!(!runtime.tool_usage_hints().contains(HINT_HEADING));
 }
 
 #[test]
@@ -901,4 +916,19 @@ fn a_registered_peer_name_wins_over_the_envelope_claim() {
         "{}",
         notice.text
     );
+}
+
+#[test]
+fn the_prompt_names_this_peer() {
+    let runtime = Runtime::with_claude();
+    let name = runtime.active()["name"].as_str().unwrap().to_owned();
+    let hints = runtime.tool_usage_hints();
+    assert!(hints.contains(HINT_HEADING), "{hints}");
+    assert!(hints.contains(&format!("reach you as {name}.")), "{hints}");
+}
+
+#[test]
+fn without_claude_code_there_is_no_session_bus_prompt() {
+    let runtime = Runtime::new();
+    assert!(!runtime.tool_usage_hints().contains(HINT_HEADING));
 }

@@ -558,6 +558,16 @@ if not sessions then
   stay_off(missing)
 else
   register_tools()
+  maki.api.register_prompt_hint({
+    slot = "tool_usage",
+    prompt = "system",
+    content = function()
+      if state.off then
+        return nil
+      end
+      return protocol.identity_hint(state.name)
+    end,
+  })
   maki.api.create_autocmd({ "SessionFocusChanged", "SessionStatusChanged", "SessionCwdChanged" }, {
     callback = function()
       maki.async.spawn(refresh)
