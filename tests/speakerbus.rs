@@ -8,6 +8,7 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 use maki_agent::SessionMailbox;
+use maki_agent::tools::ToolAudience;
 use maki_lua::Permission;
 use maki_providers::Message;
 use maki_storage::id::MakiId;
@@ -47,7 +48,9 @@ const SHARED_DIR: u32 = 0o755;
 const OPEN_DIR: u32 = 0o777;
 const NOT_PRIVATE: &str = "is not a private directory";
 const DISPLAY_LINE: &str = "Claude Code claude-peer: hello maki";
-const NO_PEERS: &str = "No Claude Code sessions are running.";
+const NO_PEERS: &str = "No other sessions are running.";
+const CLAUDE_ENTRYPOINT: &str = "cli";
+const MAKI_ENTRYPOINT: &str = "maki";
 
 fn pid() -> u32 {
     std::process::id()
@@ -223,6 +226,11 @@ struct Peer {
 
 impl Peer {
     fn at(root: &Path, name: &str) -> Self {
+        Self::with(root, name, CLAUDE_ENTRYPOINT, PEER_SESSION)
+    }
+
+    /// A peer that {entrypoint} runs, as the registry shows it.
+    fn with(root: &Path, name: &str, entrypoint: &str, session: &str) -> Self {
         let child = Command::new("sleep").arg("60").spawn().unwrap();
         let pid = child.id();
         private_dir(&sockets_in(root));
@@ -230,8 +238,9 @@ impl Peer {
         let listener = UnixListener::bind(&socket).unwrap();
         let body = json!({
             "pid": pid,
-            "sessionId": PEER_SESSION,
+            "sessionId": session,
             "cwd": "/work/peer",
+            "entrypoint": entrypoint,
             "startedAt": 0,
             "procStart": start_of(pid),
             "peerProtocol": 1,
@@ -249,6 +258,17 @@ impl Peer {
             listener,
             socket,
         }
+    }
+
+    /// The lines of a connection that is already waiting, without blocking
+    /// when there is none, after which the listener stays non-blocking.
+    fn received_now(&self) -> Vec<String> {
+        self.listener.set_nonblocking(true).unwrap();
+        let (mut stream, _) = self.listener.accept().expect("no connection waiting");
+        stream.set_nonblocking(false).unwrap();
+        let mut text = String::new();
+        stream.read_to_string(&mut text).unwrap();
+        text.lines().map(str::to_owned).collect()
     }
 
     /// The lines one sender wrote, once it closed the connection.
@@ -460,10 +480,8 @@ fn claude_send_to_a_receiver_that_never_reads_is_outcome_unknown() {
 fn claude_sessions_lists_only_live_peers() {
     let runtime = Runtime::with_claude();
     runtime.active();
-    assert_eq!(
-        runtime.call("claude_sessions", json!({})).unwrap(),
-        NO_PEERS
-    );
+    let alone = runtime.call("claude_sessions", json!({})).unwrap();
+    assert_eq!(alone.lines().nth(1), Some(NO_PEERS), "{alone}");
     let peer = Peer::at(runtime.claude.path(), PEER_NAME);
     let sessions = sessions_in(runtime.claude.path());
     let stale = |pid: u32, start: &str, socket: &Path| {
@@ -484,8 +502,11 @@ fn claude_sessions_lists_only_live_peers() {
     );
 
     let listed = runtime.call("claude_sessions", json!({})).unwrap();
-    assert_eq!(listed.lines().count(), 1, "{listed}");
-    assert!(listed.starts_with(PEER_NAME), "{listed}");
+    assert_eq!(listed.lines().count(), 2, "{listed}");
+    assert!(
+        listed.lines().nth(1).unwrap().starts_with(PEER_NAME),
+        "{listed}"
+    );
     let mut sleeper = sleeper;
     for child in [&mut sleeper, &mut no_socket] {
         child.kill().ok();
@@ -668,4 +689,138 @@ fn a_shared_directory_above_the_socket_keeps_the_plugin_off() {
     });
     assert!(runtime.stays_off().contains(NOT_PRIVATE));
     assert!(runtime.entry().is_none());
+}
+
+/// Each `claude_sessions` row as its label, program, and `to:` value.
+fn destinations(listed: &str) -> Vec<(String, String, String)> {
+    listed
+        .lines()
+        .skip(1)
+        .map(|row| {
+            let mut fields = row.split(" · ");
+            let label = fields.next().unwrap().to_owned();
+            let program = fields.next().unwrap().to_owned();
+            let to = row.rsplit_once("to: ").unwrap().1.to_owned();
+            (label, program, to)
+        })
+        .collect()
+}
+
+#[test]
+fn claude_sessions_names_itself_and_each_program() {
+    let runtime = Runtime::with_claude();
+    let name = runtime.active()["name"].as_str().unwrap().to_owned();
+    let claude = Peer::with(
+        runtime.claude.path(),
+        "cc-peer",
+        CLAUDE_ENTRYPOINT,
+        PEER_SESSION,
+    );
+    let maki = Peer::with(
+        runtime.claude.path(),
+        "maki-peer",
+        MAKI_ENTRYPOINT,
+        OTHER_SESSION,
+    );
+    let listed = runtime.call("claude_sessions", json!({})).unwrap();
+    let mut lines = listed.lines();
+    assert_eq!(
+        lines.next(),
+        Some(format!("You are {name} (Maki).").as_str())
+    );
+    let rows: Vec<&str> = lines.collect();
+    let row_of = |label: &str| *rows.iter().find(|row| row.starts_with(label)).unwrap();
+    assert!(row_of("cc-peer").contains(" · claude-code · "), "{listed}");
+    assert!(row_of("maki-peer").contains(" · maki · "), "{listed}");
+    assert!(
+        row_of("cc-peer").ends_with(&format!("to: uds:{}", claude.socket.display())),
+        "{listed}"
+    );
+    assert!(
+        row_of("maki-peer").ends_with(&format!("to: uds:{}", maki.socket.display())),
+        "{listed}"
+    );
+}
+
+#[test]
+fn every_listed_destination_reaches_its_peer() {
+    let runtime = Runtime::with_claude();
+    runtime.active();
+    let root = runtime.claude.path();
+    let sessions = [
+        "aaaaaaaa-0000-4000-8000-000000000001",
+        "aaaaaaaa-0000-4000-8000-000000000002",
+        "aaaaaaaa-0000-4000-8000-000000000003",
+        "aaaaaaaa-0000-4000-8000-000000000004",
+        "aaaaaaaa-0000-4000-8000-000000000005",
+    ];
+    // Each peer, with the label and program its row must show.
+    let peers = [
+        (
+            Peer::with(root, "gpu<1>", CLAUDE_ENTRYPOINT, sessions[0]),
+            "gpu1",
+            "claude-code",
+        ),
+        (
+            Peer::with(root, "twin", CLAUDE_ENTRYPOINT, sessions[1]),
+            "twin",
+            "claude-code",
+        ),
+        (
+            Peer::with(root, "twin", MAKI_ENTRYPOINT, sessions[2]),
+            "twin",
+            "maki",
+        ),
+        (
+            Peer::with(
+                root,
+                "uds:/tmp/elsewhere.sock",
+                CLAUDE_ENTRYPOINT,
+                sessions[3],
+            ),
+            "uds:/tmp/elsewhere.sock",
+            "claude-code",
+        ),
+        (
+            Peer::with(root, sessions[0], CLAUDE_ENTRYPOINT, sessions[4]),
+            sessions[0],
+            "claude-code",
+        ),
+    ];
+    let listed = runtime.call("claude_sessions", json!({})).unwrap();
+    let rows = destinations(&listed);
+    assert_eq!(rows.len(), peers.len(), "{listed}");
+    for (index, (_, label, program)) in peers.iter().enumerate() {
+        let (_, _, to) = rows
+            .iter()
+            .find(|(row_label, row_program, _)| row_label == label && row_program == program)
+            .unwrap_or_else(|| panic!("no row for {label} ({program}): {listed}"));
+        let message = format!("ping {index}");
+        let sent = runtime.call("claude_send", json!({"to": to, "message": message}));
+        assert!(sent.unwrap().starts_with(DELIVERED));
+    }
+    // claude_send returns once its connection is closed, so each peer holds
+    // exactly the one connection that was meant for it.
+    for (index, (peer, _, _)) in peers.iter().enumerate() {
+        let lines = peer.received_now();
+        assert_eq!(lines.len(), 1, "peer {index}");
+        assert!(
+            lines[0].contains(&format!("ping {index}")),
+            "peer {index}: {}",
+            lines[0]
+        );
+        assert!(
+            peer.listener.accept().is_err(),
+            "peer {index} got a second frame"
+        );
+    }
+}
+
+#[test]
+fn the_tools_are_for_the_main_agent_only() {
+    let runtime = Runtime::with_claude();
+    for name in ["claude_sessions", "claude_send"] {
+        let tool = &runtime.registry.get(name).unwrap().tool;
+        assert_eq!(tool.audience(), ToolAudience::MAIN, "{name}");
+    }
 }
