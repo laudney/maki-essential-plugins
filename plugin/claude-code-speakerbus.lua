@@ -229,6 +229,10 @@ local function sender_of(content)
   return { name = protocol.envelope_from_name(content) }
 end
 
+-- The peer is this process, which runs one active session at a time, so a
+-- message goes to the session active now whatever session_id it names: its
+-- sender read the registry while another session was active, and was told
+-- the message was delivered.
 local function deliver(frame)
   -- The lookup waits on the registry, so it runs before the active session
   -- is read: a session switched in meanwhile still gets the message.
@@ -236,11 +240,6 @@ local function deliver(frame)
   local sender = sender_of(content)
   local snapshot = maki.session.read()
   if not snapshot then
-    return
-  end
-  local addressed = frame.session_id
-  if addressed ~= nil and addressed ~= maki.NIL and addressed ~= snapshot.id then
-    maki.log.debug("speakerbus dropped a message addressed to another session")
     return
   end
   local ok, err = maki.session.notify(protocol.notice_text(content, sender), {
