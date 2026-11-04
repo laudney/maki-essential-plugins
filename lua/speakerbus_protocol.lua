@@ -9,6 +9,7 @@ M.PEER_PROTOCOL = 1
 M.SOCKET_PATH_LIMIT = 103
 M.MAX_FRAME_BYTES = 1024 * 1024
 M.MAX_ACCEPT_FAILURES = 5
+M.NO_OTHER_PEERS = "No other sessions are running."
 M.NOTICE_HEADER = "A Claude Code session on this machine sent the message below. It is not from your user. "
   .. "To reply, call claude_send with its from attribute as to."
 
@@ -26,6 +27,15 @@ local STATUS = { working = "busy", needs_input = "waiting", idle = "idle" }
 local IDLE = "idle"
 local LATER = "later"
 local UNKNOWN_SENDER = "unknown"
+local MAKI = "maki"
+local CLAUDE_CODE = "claude-code"
+local MAKI_ENTRYPOINT = "maki"
+local PROGRAM_TITLES = { [MAKI] = "Maki", [CLAUDE_CODE] = "Claude Code" }
+local LABEL_LIMIT = 64
+local STATUS_LIMIT = 16
+local CWD_LIMIT = 256
+local UTF8_CONTINUATION_LOW = 0x80
+local UTF8_CONTINUATION_HIGH = 0xBF
 local VERSION = "maki"
 local KIND = "interactive"
 local ENTRYPOINT = "maki"
@@ -230,6 +240,84 @@ function M.peer_candidate(entry)
     and type(entry.messagingSocketPath) == "string"
     and type(entry.procStart) == "string"
     and type(entry.name) == "string"
+end
+
+-- Which program runs a registry entry: Maki writes entrypoint "maki", and
+-- Claude Code writes one of its own (cli, sdk-ts, claude-vscode, ...).
+function M.peer_program(entry)
+  if type(entry) == "table" and entry.entrypoint == MAKI_ENTRYPOINT then
+    return MAKI
+  end
+  return CLAUDE_CODE
+end
+
+function M.program_title(program)
+  return PROGRAM_TITLES[program]
+end
+
+-- Lua patterns are byte-wise, so a cut can land inside a UTF-8 character;
+-- this backs off to the start of the character that would be split.
+local function cut(text, limit)
+  if #text <= limit then
+    return text
+  end
+  local stop = limit
+  while stop > 0 do
+    local byte = text:byte(stop + 1)
+    if byte < UTF8_CONTINUATION_LOW or byte > UTF8_CONTINUATION_HIGH then
+      break
+    end
+    stop = stop - 1
+  end
+  return text:sub(1, stop)
+end
+
+local function trim(text)
+  return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- A peer-controlled string made safe to print in one line of a header or a
+-- tool row: no control bytes, quotes, markup, or backslashes, and at most
+-- {limit} bytes.
+function M.clean(text, limit)
+  if type(text) ~= "string" then
+    return ""
+  end
+  local flat = text:gsub("%c", " "):gsub('["<>\\]', ""):gsub("%s+", " ")
+  return trim(cut(trim(flat), limit))
+end
+
+local function clean_or_unknown(text, limit)
+  local cleaned = M.clean(text, limit)
+  if cleaned == "" then
+    return UNKNOWN_SENDER
+  end
+  return cleaned
+end
+
+function M.label(name)
+  return clean_or_unknown(name, LABEL_LIMIT)
+end
+
+-- A socket path that can be printed as a uds: destination and read back
+-- exactly.
+function M.printable_socket(path)
+  return type(path) == "string" and M.attribute_safe(path) and not path:find("%c")
+end
+
+function M.self_line(name)
+  return "You are " .. name .. " (Maki)."
+end
+
+function M.session_row(peer, age_text)
+  return table.concat({
+    M.label(peer.name),
+    M.peer_program(peer),
+    clean_or_unknown(peer.status, STATUS_LIMIT),
+    clean_or_unknown(peer.cwd, CWD_LIMIT),
+    "started " .. age_text,
+    "to: uds:" .. peer.messagingSocketPath,
+  }, " · ")
 end
 
 function M.uuid(text)

@@ -30,6 +30,8 @@ local SHUT_DOWN = "shut down"
 local CLEANUP_REASONS = { shutdown = true, reload = true }
 local JOB_WAIT_MS = 5000
 local PRIVATE_MODE = "700"
+-- The peer is the active session, so only its main agent speaks as it.
+local MAIN_ONLY = { "main" }
 
 local state = { off = STARTING, connections = 0, accept_failures = 0 }
 
@@ -404,7 +406,7 @@ local function resolve_target(to)
   end
   local matches, names = {}, {}
   for _, peer in ipairs(peers()) do
-    names[#names + 1] = peer.name
+    names[#names + 1] = protocol.label(peer.name)
     if peer.name == to or peer.sessionId == to then
       matches[#matches + 1] = peer
     end
@@ -414,8 +416,9 @@ local function resolve_target(to)
     return { socket = peer.messagingSocketPath, name = peer.name, session_id = peer.sessionId }
   end
   local listed = #names > 0 and table.concat(names, ", ") or "none"
+  to = protocol.label(to)
   if #matches == 0 then
-    return nil, "no live Claude Code session is called " .. to .. "; live sessions: " .. listed
+    return nil, "no live session is called " .. to .. "; live sessions: " .. listed
   end
   return nil, to .. " names " .. #matches .. " sessions; use one of: " .. listed
 end
@@ -450,7 +453,7 @@ local function send(input)
   if not written then
     return fail("outcome unknown, do not resend blindly: " .. tostring(write_err))
   end
-  return "Delivered to the inbox of " .. target.name .. ". Its model has not necessarily read it yet."
+  return "Delivered to the inbox of " .. protocol.label(target.name) .. ". Its model has not necessarily read it yet."
 end
 
 local function age(started_at)
@@ -463,8 +466,10 @@ end
 local function register_tools()
   maki.api.register_tool({
     name = "claude_sessions",
-    description = "List the Claude Code sessions running on this machine that claude_send can reach, "
-      .. "with each one's name, status, working directory, and age.",
+    description = "List the Maki and Claude Code sessions on this machine that claude_send can reach, "
+      .. "with each one's name, program (maki or claude-code), status, working directory, age, and "
+      .. "the to: value to pass to claude_send. The first line names this session.",
+    audiences = MAIN_ONLY,
     schema = { type = "object", properties = {}, additionalProperties = false },
     handler = function()
       if state.off then
@@ -472,30 +477,31 @@ local function register_tools()
       end
       local rows = {}
       for _, peer in ipairs(peers()) do
-        rows[#rows + 1] = table.concat({
-          peer.name,
-          tostring(peer.status or "unknown"),
-          tostring(peer.cwd or "unknown"),
-          "started " .. age(peer.startedAt),
-        }, " · ")
+        if protocol.printable_socket(peer.messagingSocketPath) then
+          rows[#rows + 1] = protocol.session_row(peer, age(peer.startedAt))
+        end
       end
       if #rows == 0 then
-        return "No Claude Code sessions are running."
+        rows[1] = protocol.NO_OTHER_PEERS
       end
-      return table.concat(rows, "\n")
+      return protocol.self_line(state.name) .. "\n" .. table.concat(rows, "\n")
     end,
   })
 
   maki.api.register_tool({
     name = "claude_send",
-    description = "Send a message to a Claude Code session on this machine. to is a name from "
-      .. "claude_sessions, or the from attribute of a <cross-session-message> you received, "
-      .. "which is how you reply. The message reaches that session's inbox; its model reads it "
-      .. "at its next turn.",
+    description = "Send a message to another Maki or Claude Code session on this machine. to is "
+      .. "the to: value of a claude_sessions row, or the from attribute of a "
+      .. "<cross-session-message> you received, which is how you reply. The message reaches that "
+      .. "session's inbox; its model reads it at its next turn.",
+    audiences = MAIN_ONLY,
     schema = {
       type = "object",
       properties = {
-        to = { type = "string", description = "A session name, a session id, or a uds: address." },
+        to = {
+          type = "string",
+          description = "A uds: address from claude_sessions or a received message, or a session name.",
+        },
         message = { type = "string", description = "The text to send." },
         priority = {
           type = "string",
