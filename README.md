@@ -166,7 +166,9 @@ The message reaches the Maki session that is active when it arrives and starts
 a turn if that session is idle. Maki tells its model that the message is not
 from you, and whether a Maki session, a Claude Code session, or an unknown
 session sent it. Claude Code's `ListAgents` shows a Maki peer like any other
-session, so only its name tells Claude Code that it is Maki.
+session, with no program label. A Maki name starts with `maki-`, but a Claude
+Code session in a directory whose name starts with `maki` gets a name with the
+same prefix, so the name does not reliably tell Claude Code which program it is.
 
 The Maki model knows its own peer name and what the bus is for: its prompt asks
 it to check the other sessions before heavy or long work on shared hardware,
