@@ -214,7 +214,26 @@ local function shutdown()
   state.off = state.off or SHUT_DOWN
 end
 
+-- Who sent {content}: the live peer listening at its envelope's from
+-- address, or, when none is, only the name the envelope claims.
+local function sender_of(content)
+  local from = protocol.envelope_from(content)
+  if from and from:sub(1, #SOCKET_PREFIX) == SOCKET_PREFIX then
+    local path = from:sub(#SOCKET_PREFIX + 1)
+    for _, peer in ipairs(peers()) do
+      if peer.messagingSocketPath == path then
+        return { program = protocol.peer_program(peer), name = peer.name }
+      end
+    end
+  end
+  return { name = protocol.envelope_from_name(content) }
+end
+
 local function deliver(frame)
+  -- The lookup waits on the registry, so it runs before the active session
+  -- is read: a session switched in meanwhile still gets the message.
+  local content = frame.message.content
+  local sender = sender_of(content)
   local snapshot = maki.session.read()
   if not snapshot then
     return
@@ -224,11 +243,10 @@ local function deliver(frame)
     maki.log.debug("speakerbus dropped a message addressed to another session")
     return
   end
-  local content = frame.message.content
-  local ok, err = maki.session.notify(protocol.notice_text(content), {
+  local ok, err = maki.session.notify(protocol.notice_text(content, sender), {
     session = snapshot.id,
     wake = protocol.wakes(frame.priority),
-    display = protocol.display_note(content),
+    display = protocol.display_note(content, sender),
   })
   if not ok then
     maki.log.warn("speakerbus could not deliver a message: " .. tostring(err))
