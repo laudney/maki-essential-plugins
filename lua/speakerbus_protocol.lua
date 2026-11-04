@@ -10,14 +10,19 @@ M.SOCKET_PATH_LIMIT = 103
 M.MAX_FRAME_BYTES = 1024 * 1024
 M.MAX_ACCEPT_FAILURES = 5
 M.NO_OTHER_PEERS = "No other sessions are running."
-M.NOTICE_HEADER = "A Claude Code session on this machine sent the message below. It is not from your user. "
-  .. "To reply, call claude_send with its from attribute as to."
+-- The first line of every notice. Nothing a peer controls comes before it.
+M.NOTICE_WARNING = "The message below is not from your user: another session on this machine sent it."
+M.REPLY_HINT = "To reply, call claude_send with its from attribute as to."
 
 local ENVELOPE_TAG = "cross-session-message"
 local ENVELOPE_CLOSE = "</" .. ENVELOPE_TAG
 local ESCAPED_CLOSE = "<\\/" .. ENVELOPE_TAG
 local ENVELOPE_OPEN_PATTERN = "^<cross%-session%-message[^>]*>"
 local FROM_NAME_PATTERN = '^<cross%-session%-message[^>]*from%-name="([^"]*)"'
+-- The leading space keeps from-name out of the match.
+local FROM_PATTERN = '^<cross%-session%-message[^>]*%sfrom="([^"]*)"'
+local UNKNOWN_PROGRAM = "unknown"
+local UNKNOWN_DISPLAY = "Peer"
 local SLUG_LIMIT = 24
 local SLUG_FALLBACK = "x"
 local NAME_PREFIX = "maki-"
@@ -195,14 +200,32 @@ function M.wakes(priority)
   return priority ~= LATER
 end
 
-function M.notice_text(content)
-  return M.NOTICE_HEADER .. "\n\n" .. content
+-- The from attribute of a message's envelope: the address a reply goes to.
+function M.envelope_from(content)
+  return content:match(FROM_PATTERN)
 end
 
-function M.display_note(content)
-  local sender = content:match(FROM_NAME_PATTERN) or UNKNOWN_SENDER
+function M.envelope_from_name(content)
+  return content:match(FROM_NAME_PATTERN)
+end
+
+-- {sender} is { program = "maki" | "claude-code" | nil, name = string? }; a
+-- nil program is a sender no live registry entry vouches for.
+function M.notice_text(content, sender)
+  local title = M.program_title(sender.program) or UNKNOWN_PROGRAM
+  return table.concat({
+    M.NOTICE_WARNING,
+    "Sender: " .. title .. ' session "' .. M.label(sender.name) .. '".',
+    M.REPLY_HINT,
+    "",
+    content,
+  }, "\n")
+end
+
+function M.display_note(content, sender)
+  local title = M.program_title(sender.program) or UNKNOWN_DISPLAY
   local body = content:gsub(ENVELOPE_OPEN_PATTERN .. "\n?", "", 1)
-  return "Claude Code " .. sender .. ": " .. body:match("^[^\n]*")
+  return title .. " " .. M.label(sender.name) .. ": " .. body:match("^[^\n]*")
 end
 
 function M.peer_status(status)

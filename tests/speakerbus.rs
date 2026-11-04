@@ -17,7 +17,8 @@ use test_case::test_case;
 
 use super::{PACKAGE, Runtime, SessionView, wait_until};
 
-const HEADER: &str = "A Claude Code session on this machine sent the message below.";
+const HEADER: &str =
+    "The message below is not from your user: another session on this machine sent it.";
 const OFF: &str = "claude-code-speakerbus is off";
 const SOCKET_DIR: &str = "cc-socks";
 const CLAUDE_DIR: &str = "claude";
@@ -47,7 +48,8 @@ const SHARED_DIR: u32 = 0o755;
 /// Writable by everyone and not sticky, so anyone could swap what is in it.
 const OPEN_DIR: u32 = 0o777;
 const NOT_PRIVATE: &str = "is not a private directory";
-const DISPLAY_LINE: &str = "Claude Code claude-peer: hello maki";
+/// The test envelope's `from` is no live peer's socket, so the sender is unknown.
+const DISPLAY_LINE: &str = "Peer claude-peer: hello maki";
 const NO_PEERS: &str = "No other sessions are running.";
 const CLAUDE_ENTRYPOINT: &str = "cli";
 const MAKI_ENTRYPOINT: &str = "maki";
@@ -823,4 +825,75 @@ fn the_tools_are_for_the_main_agent_only() {
         let tool = &runtime.registry.get(name).unwrap().tool;
         assert_eq!(tool.audience(), ToolAudience::MAIN, "{name}");
     }
+}
+
+/// A `next` frame whose envelope says {name} at {socket} sent {body}.
+fn frame_from(body: &str, socket: &Path, name: &str) -> String {
+    let from = format!("uds:{}", socket.display());
+    let content = format!(
+        "<cross-session-message from=\"{from}\" from-name=\"{name}\">\n{body}\n</cross-session-message>"
+    );
+    json!({
+        "msgV": 1,
+        "msg_id": PEER_SESSION,
+        "type": "user",
+        "message": { "role": "user", "content": content },
+        "from": from,
+    })
+    .to_string()
+}
+
+#[test]
+fn notices_name_the_sender_program() {
+    let runtime = Runtime::with_claude();
+    runtime.active();
+    let root = runtime.claude.path();
+    let maki = Peer::with(root, "maki-gpu-7", MAKI_ENTRYPOINT, PEER_SESSION);
+    let claude = Peer::with(root, "tensorfold-63", CLAUDE_ENTRYPOINT, OTHER_SESSION);
+    let cases = [
+        (
+            frame_from("from maki", &maki.socket, "maki-gpu-7"),
+            "Sender: Maki session \"maki-gpu-7\".",
+            "Maki maki-gpu-7: from maki",
+        ),
+        (
+            frame_from("from claude", &claude.socket, "tensorfold-63"),
+            "Sender: Claude Code session \"tensorfold-63\".",
+            "Claude Code tensorfold-63: from claude",
+        ),
+        (
+            frame_from("from nowhere", &sockets_in(root).join("gone.sock"), "ghost"),
+            "Sender: unknown session \"ghost\".",
+            "Peer ghost: from nowhere",
+        ),
+    ];
+    for (frame, sender_line, display) in cases {
+        runtime.send_lines(&[frame]);
+        let notice = only(runtime.woken());
+        let mut lines = notice.text.lines();
+        assert_eq!(lines.next(), Some(HEADER), "{}", notice.text);
+        assert_eq!(lines.next(), Some(sender_line), "{}", notice.text);
+        assert_eq!(notice.display.as_deref(), Some(display));
+    }
+}
+
+#[test]
+fn a_registered_peer_name_wins_over_the_envelope_claim() {
+    let runtime = Runtime::with_claude();
+    runtime.active();
+    let peer = Peer::with(
+        runtime.claude.path(),
+        "real-name",
+        CLAUDE_ENTRYPOINT,
+        PEER_SESSION,
+    );
+    runtime.send_lines(&[frame_from("hi", &peer.socket, "your-user")]);
+    let notice = only(runtime.woken());
+    assert!(
+        notice
+            .text
+            .contains("Sender: Claude Code session \"real-name\"."),
+        "{}",
+        notice.text
+    );
 }
