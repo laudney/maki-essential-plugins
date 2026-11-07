@@ -1,5 +1,7 @@
 # Maki essential plugins
 
+<img src="assets/just-one-more-plugin.png" width="880" alt="Maki's sushi cat with six gadget arms and tangled cables: just one more plugin.">
+
 Lua plugins for [Maki](https://github.com/tontinton/maki): keep an agent
 working toward a goal, get notified when a background command makes progress
 or finishes, switch between providers, exchange messages with other Maki and
