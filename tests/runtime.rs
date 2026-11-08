@@ -406,9 +406,16 @@ impl Runtime {
             "session_id".into(),
             json!(self.ctx.session_id.as_ref().unwrap().as_str()),
         );
-        self.host
-            .event_handle()
-            .fire_autocmd(event, Value::Object(data));
+        self.fire_autocmd(event, Value::Object(data));
+    }
+
+    // Fires `data` as given. Newer Maki moved the raw call off EventHandle.
+    fn fire_autocmd(&self, event: &str, data: Value) {
+        let handle = self.host.event_handle();
+        #[cfg(feature = "test_support_autocmd")]
+        maki_lua::test_support::fire_autocmd(&handle, event, data);
+        #[cfg(not(feature = "test_support_autocmd"))]
+        handle.fire_autocmd(event, data);
     }
 
     fn hints(&self) -> String {

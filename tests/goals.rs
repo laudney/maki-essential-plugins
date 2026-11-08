@@ -144,7 +144,7 @@ fn content_events_arrive_without_a_permission_warning() {
 fn focus_and_background_reset_preserve_the_focused_goal_hint() {
     let runtime = Runtime::new();
     runtime.goal_running();
-    runtime.host.event_handle().fire_autocmd(
+    runtime.fire_autocmd(
         "SessionReset",
         json!({"session_id": MakiId::generate().to_string()}),
     );
@@ -152,7 +152,7 @@ fn focus_and_background_reset_preserve_the_focused_goal_hint() {
     assert!(runtime.hints().contains("Pursuing goal"));
     let other = MakiId::generate();
     *runtime.focused.lock().unwrap() = other;
-    runtime.host.event_handle().fire_autocmd(
+    runtime.fire_autocmd(
         "SessionFocusChanged",
         json!({"session_id": other.to_string()}),
     );

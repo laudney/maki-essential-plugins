@@ -210,7 +210,7 @@ fn picker_closes_on_focus_change_even_if_keys_keep_arriving() {
     assert_eq!(window.cursor(), 1);
     let other = MakiId::generate();
     *runtime.focused.lock().unwrap() = other;
-    runtime.host.event_handle().fire_autocmd(
+    runtime.fire_autocmd(
         "SessionFocusChanged",
         json!({"session_id": other.to_string()}),
     );

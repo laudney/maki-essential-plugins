@@ -58,7 +58,7 @@ def main():
     ):
         dependency = {"path": str(source / name)}
         crate = tomllib.loads((source / name / "Cargo.toml").read_text())
-        # Newer Maki builds keep the raw `fire_autocmd` behind this feature.
+        # Some Maki builds keep test helpers behind this feature.
         if "test-support" in crate.get("features", {}):
             dependency["features"] = ["test-support"]
         manifest.append(f"{name} = {toml_value(dependency)}")
@@ -84,6 +84,10 @@ def main():
             source / "maki-providers/src/providers/catalog.rs",
         ),
         "unix_sockets": ("fn listen_unix", source / "maki-lua/src/api/net/unix.rs"),
+        "test_support_autocmd": (
+            "pub fn fire_autocmd(handle: &EventHandle",
+            source / "maki-lua/src/lib.rs",
+        ),
     }
     manifest.append("[features]")
     manifest.extend(f"{name} = []" for name in detected)
