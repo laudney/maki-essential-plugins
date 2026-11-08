@@ -153,8 +153,12 @@ mailbox.
 Claude Code sessions on one machine message each other with their
 `ListAgents` and `SendMessage` tools. This package makes each Maki process one
 of those peers, on Linux with a Maki build whose `maki.net` has `listen_unix`.
-Several Maki processes and Claude Code sessions can share the bus, so agents
-that use the same CPUs, GPUs, memory, or ports can coordinate their work.
+Upstream Maki added it in
+[tontinton/maki#1511](https://github.com/tontinton/maki/pull/1511), merged
+after the 0.7.1 release, so build Maki from its `main` branch until a release
+includes it. Several Maki processes and Claude Code sessions can share the
+bus, so agents that use the same CPUs, GPUs, memory, or ports can coordinate
+their work.
 
 Type `/speakerbus` to see the name other sessions use for this Maki, such as
 `maki-project-4242`. In a Claude Code session, ask:
@@ -323,7 +327,8 @@ has `listen_unix`, and otherwise check that the plugin stays off:
 python3 tests/runtime.py /path/to/maki --lint
 ```
 
-Use the same command with a fork checkout to check both targets. When building
+Run the same command against a `v0.7.0` checkout and a `main` checkout to
+check both cases. When building
 with system OpenSSL, set `OPENSSL_NO_VENDOR=1` as described in Maki's build
 instructions. Build files are cached in `.cache/runtime/`, or in
 `CARGO_TARGET_DIR` if set.
@@ -331,8 +336,9 @@ instructions. Build files are cached in `.cache/runtime/`, or in
 CI tests Maki `v0.7.0`, the minimum supported release, and upstream `main` on
 each push and pull request, and weekly to detect upstream API changes. It also
 checks Lua state tests, Python lint, and formatting. Provider tests run on
-both targets. Reused Maki code and fixed fixtures are documented
-in [THIRD_PARTY.md](THIRD_PARTY.md).
+both targets. The Claude Code plugin's runtime tests run against `main`;
+against `v0.7.0` they check that the plugin stays off. Reused Maki code and
+fixed fixtures are documented in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## License
 
